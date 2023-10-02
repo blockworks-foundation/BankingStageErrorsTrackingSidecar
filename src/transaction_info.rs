@@ -1,52 +1,52 @@
 use std::{collections::HashMap, hash::Hash};
 
-use solana_sdk::{slot_history::Slot, transaction::Transaction, transaction::TransactionError};
-use yellowstone_grpc_proto::prelude::SubscribeUpdateBankingTransactionResults;
+use solana_sdk::{slot_history::Slot, transaction::TransactionError, message::{VersionedMessage, v0::{self, MessageAddressTableLookup}, MessageHeader}, pubkey::Pubkey, instruction::CompiledInstruction, compute_budget::{self, ComputeBudgetInstruction}, borsh0_10::try_from_slice_unchecked};
+use yellowstone_grpc_proto::prelude::{SubscribeUpdateBankingTransactionResults, SubscribeUpdateTransactionInfo};
 
-fn convert_transaction_error_into_int(error: &TransactionError)-> u8 {
+fn convert_transaction_error_into_int(error: &TransactionError) -> u8 {
     match error {
-        TransactionError::AccountBorrowOutstanding=>0,
-        TransactionError::AccountInUse=>1,
-        TransactionError::AccountLoadedTwice=>2,
-        TransactionError::AccountNotFound=>3,
-        TransactionError::AddressLookupTableNotFound=>4,
-        TransactionError::AlreadyProcessed=>5,
-        TransactionError::BlockhashNotFound=>6,
-        TransactionError::CallChainTooDeep=>7,
-        TransactionError::ClusterMaintenance=>8,
-        TransactionError::DuplicateInstruction(_)=>9,
+        TransactionError::AccountBorrowOutstanding => 0,
+        TransactionError::AccountInUse => 1,
+        TransactionError::AccountLoadedTwice => 2,
+        TransactionError::AccountNotFound => 3,
+        TransactionError::AddressLookupTableNotFound => 4,
+        TransactionError::AlreadyProcessed => 5,
+        TransactionError::BlockhashNotFound => 6,
+        TransactionError::CallChainTooDeep => 7,
+        TransactionError::ClusterMaintenance => 8,
+        TransactionError::DuplicateInstruction(_) => 9,
         TransactionError::InstructionError(_, _) => 10,
-        TransactionError::InsufficientFundsForFee=>11,
+        TransactionError::InsufficientFundsForFee => 11,
         TransactionError::InsufficientFundsForRent { .. } => 12,
         TransactionError::InvalidAccountForFee => 13,
         TransactionError::InvalidAccountIndex => 14,
-        TransactionError::InvalidAddressLookupTableData=>15,
-        TransactionError::InvalidAddressLookupTableIndex=>16,
-        TransactionError::InvalidAddressLookupTableOwner=>17,
-        TransactionError::InvalidLoadedAccountsDataSizeLimit=>18,
-        TransactionError::InvalidProgramForExecution=>19,
-        TransactionError::InvalidRentPayingAccount=>20,
-        TransactionError::InvalidWritableAccount=>21,
-        TransactionError::MaxLoadedAccountsDataSizeExceeded=>22,
-        TransactionError::MissingSignatureForFee=>23,
-        TransactionError::ProgramAccountNotFound=>24,
-        TransactionError::ResanitizationNeeded=>25,
-        TransactionError::SanitizeFailure=>26,
-        TransactionError::SignatureFailure=>27,
-        TransactionError::TooManyAccountLocks=>28,
-        TransactionError::UnbalancedTransaction=>29,
-        TransactionError::UnsupportedVersion=>30,
-        TransactionError::WouldExceedAccountDataBlockLimit=>31,
-        TransactionError::WouldExceedAccountDataTotalLimit=>32,
-        TransactionError::WouldExceedMaxAccountCostLimit=>33,
-        TransactionError::WouldExceedMaxBlockCostLimit=>34,
-        TransactionError::WouldExceedMaxVoteCostLimit=>35,
+        TransactionError::InvalidAddressLookupTableData => 15,
+        TransactionError::InvalidAddressLookupTableIndex => 16,
+        TransactionError::InvalidAddressLookupTableOwner => 17,
+        TransactionError::InvalidLoadedAccountsDataSizeLimit => 18,
+        TransactionError::InvalidProgramForExecution => 19,
+        TransactionError::InvalidRentPayingAccount => 20,
+        TransactionError::InvalidWritableAccount => 21,
+        TransactionError::MaxLoadedAccountsDataSizeExceeded => 22,
+        TransactionError::MissingSignatureForFee => 23,
+        TransactionError::ProgramAccountNotFound => 24,
+        TransactionError::ResanitizationNeeded => 25,
+        TransactionError::SanitizeFailure => 26,
+        TransactionError::SignatureFailure => 27,
+        TransactionError::TooManyAccountLocks => 28,
+        TransactionError::UnbalancedTransaction => 29,
+        TransactionError::UnsupportedVersion => 30,
+        TransactionError::WouldExceedAccountDataBlockLimit => 31,
+        TransactionError::WouldExceedAccountDataTotalLimit => 32,
+        TransactionError::WouldExceedMaxAccountCostLimit => 33,
+        TransactionError::WouldExceedMaxBlockCostLimit => 34,
+        TransactionError::WouldExceedMaxVoteCostLimit => 35,
     }
 }
 
 #[derive(Clone, PartialEq)]
 pub struct ErrorKey {
-    error : TransactionError,
+    error: TransactionError,
     slot: Slot,
 }
 
@@ -58,30 +58,32 @@ impl Hash for ErrorKey {
     }
 }
 
-impl Eq for ErrorKey {
-
-}
+impl Eq for ErrorKey {}
 
 pub struct TransactionInfo {
-    pub signature : String,
-    pub transaction_message: Option<Transaction>,
+    pub signature: String,
+    pub transaction_message: Option<VersionedMessage>,
     pub errors: HashMap<ErrorKey, usize>,
     pub is_executed: bool,
-    pub is_confirmed : bool,
-    pub block_height : Option<u64>,
+    pub is_confirmed: bool,
+    pub block_height: Option<u64>,
     pub first_notification_slot: u64,
+    pub cu_requested: Option<u64>,
+    pub prioritization_fees: Option<u64>,
 }
 
 impl TransactionInfo {
     pub fn new(signature: String, first_notification_slot: Slot) -> Self {
-        Self { 
-            signature, 
+        Self {
+            signature,
             transaction_message: None,
             errors: HashMap::new(),
             is_executed: false,
             is_confirmed: false,
             first_notification_slot,
-            block_height: None,
+            block_height: Some(first_notification_slot + 300),
+            cu_requested: None,
+            prioritization_fees: None,
         }
     }
 
@@ -90,22 +92,148 @@ impl TransactionInfo {
             Some(error) => {
                 let slot = notification.slot;
                 let error: TransactionError = bincode::deserialize(&error.err).unwrap();
-                let key = ErrorKey {
-                    error,
-                    slot,
-                };
+                let key = ErrorKey { error, slot };
                 match self.errors.get_mut(&key) {
                     Some(x) => {
                         *x = *x + 1;
-                    },
+                    }
                     None => {
                         self.errors.insert(key, 1);
                     }
                 }
-            },
+            }
             None => {
                 self.is_executed = true;
             }
         }
+    }
+
+    pub fn add_transaction(&mut self, transaction: &SubscribeUpdateTransactionInfo) {
+
+        let Some(transaction) = &transaction.transaction else {
+            return;
+        };
+
+        let Some(message) = &transaction.message else {
+            return;
+        };
+
+        let Some(header) = &message.header else {
+            return;
+        };
+
+        let message = VersionedMessage::V0(v0::Message {
+            header: MessageHeader {
+                num_required_signatures: header.num_required_signatures as u8,
+                num_readonly_signed_accounts: header.num_readonly_signed_accounts as u8,
+                num_readonly_unsigned_accounts: header.num_readonly_unsigned_accounts as u8,
+            },
+            account_keys: message
+                .account_keys.clone()
+                .into_iter()
+                .map(|key| {
+                    let bytes: [u8; 32] =
+                        key.try_into().unwrap_or(Pubkey::default().to_bytes());
+                    Pubkey::new_from_array(bytes)
+                })
+                .collect(),
+            recent_blockhash: solana_sdk::hash::Hash::new(&message.recent_blockhash),
+            instructions: message
+                .instructions.clone()
+                .into_iter()
+                .map(|ix| CompiledInstruction {
+                    program_id_index: ix.program_id_index as u8,
+                    accounts: ix.accounts,
+                    data: ix.data,
+                })
+                .collect(),
+            address_table_lookups: message
+                .address_table_lookups.clone()
+                .into_iter()
+                .map(|table| {
+                    let bytes: [u8; 32] = table
+                        .account_key
+                        .try_into()
+                        .unwrap_or(Pubkey::default().to_bytes());
+                    MessageAddressTableLookup {
+                        account_key: Pubkey::new_from_array(bytes),
+                        writable_indexes: table.writable_indexes,
+                        readonly_indexes: table.readonly_indexes,
+                    }
+                })
+                .collect(),
+        });
+
+        let legacy_compute_budget: Option<(u32, Option<u64>)> =
+            message.instructions().iter().find_map(|i| {
+                if i.program_id(message.static_account_keys())
+                    .eq(&compute_budget::id())
+                {
+                    if let Ok(ComputeBudgetInstruction::RequestUnitsDeprecated {
+                        units,
+                        additional_fee,
+                    }) = try_from_slice_unchecked(i.data.as_slice())
+                    {
+                        if additional_fee > 0 {
+                            return Some((
+                                units,
+                                Some(((units * 1000) / additional_fee) as u64),
+                            ));
+                        } else {
+                            return Some((units, None));
+                        }
+                    }
+                }
+                None
+            });
+
+        let legacy_cu_requested = legacy_compute_budget.map(|x| x.0);
+        let legacy_prioritization_fees = legacy_compute_budget.map(|x| x.1).unwrap_or(None);
+
+        let cu_requested = message
+            .instructions()
+            .iter()
+            .find_map(|i| {
+                if i.program_id(message.static_account_keys())
+                    .eq(&compute_budget::id())
+                {
+                    if let Ok(ComputeBudgetInstruction::SetComputeUnitLimit(limit)) =
+                        try_from_slice_unchecked(i.data.as_slice())
+                    {
+                        return Some(limit);
+                    }
+                }
+                None
+            })
+            .or(legacy_cu_requested);
+
+        let prioritization_fees = message
+            .instructions()
+            .iter()
+            .find_map(|i| {
+                if i.program_id(message.static_account_keys())
+                    .eq(&compute_budget::id())
+                {
+                    if let Ok(ComputeBudgetInstruction::SetComputeUnitPrice(price)) =
+                        try_from_slice_unchecked(i.data.as_slice())
+                    {
+                        return Some(price);
+                    }
+                }
+
+                None
+            })
+            .or(legacy_prioritization_fees);
+
+        if let Some(cu_requested) = cu_requested {
+            self.cu_requested = Some(cu_requested as u64);
+        }
+
+        if let Some(prioritization_fees) = prioritization_fees {
+            self.prioritization_fees = Some(prioritization_fees);
+        }
+        self.is_confirmed = true;
+        self.transaction_message = Some(message);
+        self.is_executed = true;
     }
 }
