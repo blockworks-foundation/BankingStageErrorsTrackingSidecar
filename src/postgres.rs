@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::{sync::{Arc, atomic::AtomicU64}, time::Duration};
 
 use anyhow::Context;
-use tokio::sync::RwLock;
-use tokio_postgres::{Client, config::SslMode, NoTls, tls::MakeTlsConnect, Socket, types::ToSql};
+use dashmap::DashMap;
+use itertools::Itertools;
+use tokio_postgres::{Client, NoTls, tls::MakeTlsConnect, Socket, types::ToSql};
 
 use crate::transaction_info::TransactionInfo;
 
@@ -77,9 +78,10 @@ impl PostgresSession {
         if txs.is_empty() {
             return Ok(());
         }
-        let NUMBER_OF_ARGS = 8;
+        const NUMBER_OF_ARGS : usize = 8;
 
         let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS * txs.len());
+        let txs: Vec<PostgresTransactionInfo> = txs.iter().map(|x| PostgresTransactionInfo::from(x)).collect();
         for tx in txs.iter() {
             args.push(&tx.signature);
             args.push(&tx.transaction_message);
@@ -90,10 +92,87 @@ impl PostgresSession {
             args.push(&tx.cu_requested);
             args.push(&tx.prioritization_fees);
         }
+
+        let mut query = String::from(
+            r#"
+                INSERT INTO banking_stage_results.transaction_infos 
+                (signature, message, errors, is_executed, is_confirmed, first_notification_slot, cu_requested, prioritization_fees)
+                VALUES
+            "#,
+        );
+
+        Self::multiline_query(&mut query, NUMBER_OF_ARGS, txs.len(), &[]);
+        self.client.execute(&query, &args).await?;
+
         Ok(())
     }
 }
 
 pub struct Postgres {
-    session: Arc<RwLock<PostgresSession>>,
+    session: Arc<PostgresSession>,
+}
+
+impl Postgres {
+    pub async fn new() -> Self {
+        let session = PostgresSession::new().await.unwrap();
+        Self { session: Arc::new(session) }
+    }
+
+    pub fn start_saving_transaction(&self, map_of_transaction : Arc<DashMap<String, TransactionInfo>>, slots : Arc<AtomicU64>) {
+        let session = self.session.clone();
+        tokio::task::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                println!("postgres loop");
+                let slot = slots.load(std::sync::atomic::Ordering::Relaxed);
+                let mut txs_to_store = vec![];
+                for tx in map_of_transaction.iter() {
+                    if slot > tx.first_notification_slot + 300 {
+                        txs_to_store.push(tx.clone());
+                    }
+                }
+
+                if !txs_to_store.is_empty() {
+                    println!("saving {}", txs_to_store.len());
+                    for tx in &txs_to_store {
+                        map_of_transaction.remove(&tx.signature);
+                    }
+                    let batches = txs_to_store.chunks(8).collect_vec();
+                    for batch in batches {
+                        session.save_banking_transaction_results(batch).await.unwrap();
+                    }
+                }
+            }
+        });
+    }
+}
+
+pub struct PostgresTransactionInfo {
+    pub signature: String,
+    pub transaction_message: Option<String>,
+    pub errors: String,
+    pub is_executed: bool,
+    pub is_confirmed: bool,
+    pub first_notification_slot: i64,
+    pub cu_requested: Option<i64>,
+    pub prioritization_fees: Option<i64>,
+}
+
+impl From<&TransactionInfo> for PostgresTransactionInfo {
+    fn from(value: &TransactionInfo) -> Self {
+        let errors = value.errors.iter().fold(String::new(), |is, x| {
+            let str = is + x.0.to_string().as_str() + ":" + x.1.to_string().as_str() + ";";
+            str
+        });
+        Self {
+            signature: value.signature.clone(),
+            transaction_message: value.transaction_message.as_ref().map(|x| base64::encode(bincode::serialize(&x).unwrap())),
+            errors,
+            is_executed: value.is_executed,
+            is_confirmed: value.is_confirmed,
+            cu_requested: value.cu_requested.map(|x| x as i64),
+            first_notification_slot: value.first_notification_slot as i64,
+            prioritization_fees: value.prioritization_fees.map(|x| x as i64)
+        }
+    }
 }

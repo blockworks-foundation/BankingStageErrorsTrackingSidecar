@@ -50,6 +50,12 @@ pub struct ErrorKey {
     slot: Slot,
 }
 
+impl ToString for ErrorKey {
+    fn to_string(&self) -> String {
+        self.error.to_string() + "-" + self.slot.to_string().as_str()
+    }
+}
+
 impl Hash for ErrorKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         let tmp = convert_transaction_error_into_int(&self.error);
@@ -60,13 +66,13 @@ impl Hash for ErrorKey {
 
 impl Eq for ErrorKey {}
 
+#[derive(Clone)]
 pub struct TransactionInfo {
     pub signature: String,
     pub transaction_message: Option<VersionedMessage>,
     pub errors: HashMap<ErrorKey, usize>,
     pub is_executed: bool,
     pub is_confirmed: bool,
-    pub block_height: Option<u64>,
     pub first_notification_slot: u64,
     pub cu_requested: Option<u64>,
     pub prioritization_fees: Option<u64>,
@@ -81,7 +87,6 @@ impl TransactionInfo {
             is_executed: false,
             is_confirmed: false,
             first_notification_slot,
-            block_height: Some(first_notification_slot + 300),
             cu_requested: None,
             prioritization_fees: None,
         }

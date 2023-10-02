@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::{Arc, atomic::AtomicU64}};
 
 use dashmap::DashMap;
 use futures::StreamExt;
@@ -17,6 +17,9 @@ async fn main() {
     let grpc_addr = "http://127.0.0.1:10000";
     let mut client = GeyserGrpcClient::connect(grpc_addr, None::<&'static str>, None).unwrap();
     let map_of_infos = Arc::new(DashMap::<String, TransactionInfo>::new());
+
+    let postgres = postgres::Postgres::new().await;
+    let slot = Arc::new(AtomicU64::new(0));
 
     let mut blocks_subs = HashMap::new();
     blocks_subs.insert(
@@ -44,6 +47,9 @@ async fn main() {
         )
         .await
         .unwrap();
+
+    postgres.start_saving_transaction(map_of_infos.clone(), slot.clone());
+
     while let Some(message) = stream.next().await {
         let message = message.unwrap();
 
@@ -70,6 +76,7 @@ async fn main() {
                 }
             }
             UpdateOneof::Block(block) => {
+                slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
                 for transaction in block.transactions {
                     let Some(tx) = &transaction.transaction else {
                         continue;
