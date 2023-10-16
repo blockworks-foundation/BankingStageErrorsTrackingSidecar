@@ -68,9 +68,11 @@ async fn main() {
                         x.add_notification(&transaction);
                     }
                     None => {
+                        let mut x = TransactionInfo::new(&transaction);
+                        x.add_notification(&transaction);
                         map_of_infos.insert(
                             sig,
-                            TransactionInfo::new(transaction.signature, transaction.slot),
+                            x,
                         );
                     }
                 }

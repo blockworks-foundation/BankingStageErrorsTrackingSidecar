@@ -79,14 +79,26 @@ pub struct TransactionInfo {
 }
 
 impl TransactionInfo {
-    pub fn new(signature: String, first_notification_slot: Slot) -> Self {
+    pub fn new(notification: &SubscribeUpdateBankingTransactionResults) -> Self {
+        let mut errors = HashMap::new();
+        let is_executed = notification.error.is_none();
+        
+        match &notification.error {
+            Some(e) => {
+                let error: TransactionError = bincode::deserialize(&e.err).unwrap();
+                let key = ErrorKey { error, slot: notification.slot };
+                errors.insert( key, 1);
+            },
+            None => {
+            }
+        };
         Self {
-            signature,
+            signature: notification.signature.clone(),
             transaction_message: None,
-            errors: HashMap::new(),
-            is_executed: false,
+            errors,
+            is_executed,
             is_confirmed: false,
-            first_notification_slot,
+            first_notification_slot: notification.slot,
             cu_requested: None,
             prioritization_fees: None,
         }
