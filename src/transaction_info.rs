@@ -1,5 +1,6 @@
 use std::{collections::HashMap, hash::Hash};
 
+use chrono::{DateTime, Utc};
 use solana_sdk::{slot_history::Slot, transaction::TransactionError, message::{VersionedMessage, v0::{self, MessageAddressTableLookup}, MessageHeader}, pubkey::Pubkey, instruction::CompiledInstruction, compute_budget::{self, ComputeBudgetInstruction}, borsh0_10::try_from_slice_unchecked};
 use yellowstone_grpc_proto::prelude::{SubscribeUpdateBankingTransactionResults, SubscribeUpdateTransactionInfo};
 
@@ -46,8 +47,8 @@ fn convert_transaction_error_into_int(error: &TransactionError) -> u8 {
 
 #[derive(Clone, PartialEq)]
 pub struct ErrorKey {
-    error: TransactionError,
-    slot: Slot,
+    pub error: TransactionError,
+    pub slot: Slot,
 }
 
 impl ToString for ErrorKey {
@@ -76,12 +77,16 @@ pub struct TransactionInfo {
     pub first_notification_slot: u64,
     pub cu_requested: Option<u64>,
     pub prioritization_fees: Option<u64>,
+    pub utc_timestamp: DateTime<Utc>,
+    pub account_used: HashMap<Pubkey, char>,
 }
 
 impl TransactionInfo {
     pub fn new(notification: &SubscribeUpdateBankingTransactionResults) -> Self {
         let mut errors = HashMap::new();
         let is_executed = notification.error.is_none();
+        // Get time
+        let utc_timestamp = Utc::now();
         
         match &notification.error {
             Some(e) => {
@@ -101,6 +106,9 @@ impl TransactionInfo {
             first_notification_slot: notification.slot,
             cu_requested: None,
             prioritization_fees: None,
+            utc_timestamp,
+            account_used: HashMap::new(),
+
         }
     }
 
@@ -242,6 +250,8 @@ impl TransactionInfo {
             })
             .or(legacy_prioritization_fees);
 
+        let account_used: HashMap<Pubkey, char> = message.static_account_keys().iter().enumerate().map(|(index, x)| (x.clone(), if message.is_maybe_writable(index) {'w'} else {'r'})).collect();
+
         if let Some(cu_requested) = cu_requested {
             self.cu_requested = Some(cu_requested as u64);
         }
@@ -252,5 +262,6 @@ impl TransactionInfo {
         self.is_confirmed = true;
         self.transaction_message = Some(message);
         self.is_executed = true;
+        self.account_used = account_used;
     }
 }

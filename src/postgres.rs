@@ -1,11 +1,12 @@
 use std::{sync::{Arc, atomic::AtomicU64}, time::Duration};
 
 use anyhow::Context;
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use itertools::Itertools;
 use tokio_postgres::{Client, NoTls, tls::MakeTlsConnect, Socket, types::ToSql};
 
-use crate::transaction_info::TransactionInfo;
+use crate::{transaction_info::TransactionInfo, block_info::BlockInfo};
 
 
 pub struct PostgresSession {
@@ -78,7 +79,7 @@ impl PostgresSession {
         if txs.is_empty() {
             return Ok(());
         }
-        const NUMBER_OF_ARGS : usize = 8;
+        const NUMBER_OF_ARGS : usize = 10;
 
         let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS * txs.len());
         let txs: Vec<PostgresTransactionInfo> = txs.iter().map(|x| PostgresTransactionInfo::from(x)).collect();
@@ -91,17 +92,46 @@ impl PostgresSession {
             args.push(&tx.first_notification_slot);
             args.push(&tx.cu_requested);
             args.push(&tx.prioritization_fees);
+            args.push(&tx.utc_timestamp);
+            args.push(&tx.accounts_used);
         }
 
         let mut query = String::from(
             r#"
                 INSERT INTO banking_stage_results.transaction_infos 
-                (signature, message, errors, is_executed, is_confirmed, first_notification_slot, cu_requested, prioritization_fees)
+                (signature, message, errors, is_executed, is_confirmed, first_notification_slot, cu_requested, prioritization_fees, timestamp, accounts_used)
                 VALUES
             "#,
         );
 
         Self::multiline_query(&mut query, NUMBER_OF_ARGS, txs.len(), &[]);
+        self.client.execute(&query, &args).await?;
+
+        Ok(())
+    }
+
+    pub async fn save_block(&self, block_info: BlockInfo) -> anyhow::Result<()>  {
+        const NUMBER_OF_ARGS : usize = 9; 
+        let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS);
+        args.push(&block_info.block_hash);
+        args.push(&block_info.slot);
+        args.push(&block_info.leader_identity);
+        args.push(&block_info.successful_transactions);
+        args.push(&block_info.banking_stage_errors);
+        args.push(&block_info.processed_transactions);
+        args.push(&block_info.total_cu_used);
+        args.push(&block_info.total_cu_requested);
+        args.push(&block_info.heavily_writelocked_accounts);
+
+        let mut query = String::from(
+            r#"
+                INSERT INTO banking_stage_results.blocks 
+                (block_hash, slot, leader_identity, successful_transactions, banking_stage_errors, processed_transactions, total_cu_used, total_cu_requested, heavily_writelocked_accounts)
+                VALUES
+            "#,
+        );
+
+        Self::multiline_query(&mut query, NUMBER_OF_ARGS, 1, &[]);
         self.client.execute(&query, &args).await?;
 
         Ok(())
@@ -123,7 +153,6 @@ impl Postgres {
         tokio::task::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(60)).await;
-                println!("postgres loop");
                 let slot = slots.load(std::sync::atomic::Ordering::Relaxed);
                 let mut txs_to_store = vec![];
                 for tx in map_of_transaction.iter() {
@@ -145,6 +174,10 @@ impl Postgres {
             }
         });
     }
+
+    pub async fn save_block_info(&self, block: BlockInfo) -> anyhow::Result<()> {
+        self.session.save_block(block).await
+    }
 }
 
 pub struct PostgresTransactionInfo {
@@ -156,6 +189,8 @@ pub struct PostgresTransactionInfo {
     pub first_notification_slot: i64,
     pub cu_requested: Option<i64>,
     pub prioritization_fees: Option<i64>,
+    pub utc_timestamp: DateTime<Utc>,
+    pub accounts_used: Vec<String>,
 }
 
 impl From<&TransactionInfo> for PostgresTransactionInfo {
@@ -164,6 +199,7 @@ impl From<&TransactionInfo> for PostgresTransactionInfo {
             let str = is + x.0.to_string().as_str() + ":" + x.1.to_string().as_str() + ";";
             str
         });
+        let accounts_used = value.account_used.iter().map(|x| format!("{}({})", x.0, x.1).to_string()).collect();
         Self {
             signature: value.signature.clone(),
             transaction_message: value.transaction_message.as_ref().map(|x| base64::encode(bincode::serialize(&x).unwrap())),
@@ -172,7 +208,9 @@ impl From<&TransactionInfo> for PostgresTransactionInfo {
             is_confirmed: value.is_confirmed,
             cu_requested: value.cu_requested.map(|x| x as i64),
             first_notification_slot: value.first_notification_slot as i64,
-            prioritization_fees: value.prioritization_fees.map(|x| x as i64)
+            prioritization_fees: value.prioritization_fees.map(|x| x as i64),
+            utc_timestamp: value.utc_timestamp,
+            accounts_used,
         }
     }
 }

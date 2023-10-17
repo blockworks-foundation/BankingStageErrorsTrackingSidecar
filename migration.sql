@@ -8,5 +8,19 @@ CREATE TABLE banking_stage_results.transaction_infos (
   is_confirmed BOOL,
   first_notification_slot BIGINT NOT NULL,
   cu_requested BIGINT,
-  prioritization_fees BIGINT
+  prioritization_fees BIGINT,
+  timestamp TIMESTAMP NOT NULL,
+  accounts_used text[],
+);
+
+CREATE TABLE banking_stage_results.blocks (
+  block_hash CHAR(44) NOT NULL,
+  slot BIGINT,
+  leader_identity CHAR(44),
+  successful_transactions BIGINT,
+  banking_stage_errors BIGINT,
+  processed_transactions BIGINT,
+  total_cu_used BIGINT,
+  total_cu_requested BIGINT,
+  heavily_writelocked_accounts text[],
 );

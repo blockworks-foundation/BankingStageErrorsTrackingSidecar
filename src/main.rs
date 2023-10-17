@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::{Arc, atomic::AtomicU64}};
 
+use block_info::BlockInfo;
 use dashmap::DashMap;
 use futures::StreamExt;
 use solana_sdk::signature::Signature;
@@ -11,6 +12,7 @@ use yellowstone_grpc_proto::prelude::{
 
 mod transaction_info;
 mod postgres;
+mod block_info;
 
 #[tokio::main()]
 async fn main() {
@@ -79,7 +81,7 @@ async fn main() {
             }
             UpdateOneof::Block(block) => {
                 slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
-                for transaction in block.transactions {
+                for transaction in &block.transactions {
                     let Some(tx) = &transaction.transaction else {
                         continue;
                     };
@@ -87,6 +89,11 @@ async fn main() {
                     if let Some(mut info) = map_of_infos.get_mut(&signature.to_string()) {
                         info.add_transaction(&transaction);
                     }
+                }
+
+                let block_info = BlockInfo::new(&block, map_of_infos.clone());
+                if let Err(e) = postgres.save_block_info(block_info).await {
+                    log::error!("Error saving block {}", e);
                 }
             }
             _ => {
