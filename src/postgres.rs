@@ -99,7 +99,7 @@ impl PostgresSession {
         let mut query = String::from(
             r#"
                 INSERT INTO banking_stage_results.transaction_infos 
-                (signature, message, errors, is_executed, is_confirmed, first_notification_slot, cu_requested, prioritization_fees, timestamp, accounts_used)
+                (signature, message, errors, is_executed, is_confirmed, first_notification_slot, cu_requested, prioritization_fees, utc_timestamp, accounts_used)
                 VALUES
             "#,
         );
