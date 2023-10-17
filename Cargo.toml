@@ -33,5 +33,5 @@ tokio-postgres = { version = "0.7.10", features = ["with-chrono-0_4"] }
 rustls = { version = "=0.20.8", default-features = false }
 
 tokio = { version = "1.32.0", features = ["rt-multi-thread", "macros", "time"] }
-yellowstone-grpc-client = { path = "../yellowstone-grpc/yellowstone-grpc-client" }
-yellowstone-grpc-proto = { path = "../yellowstone-grpc/yellowstone-grpc-proto" }
+yellowstone-grpc-client = {git = "https://github.com/blockworks-foundation/yellowstone-grpc.git", branch = "geyser_get_banking_transaction_results"}
+yellowstone-grpc-proto = {git = "https://github.com/blockworks-foundation/yellowstone-grpc.git", branch = "geyser_get_banking_transaction_results"}

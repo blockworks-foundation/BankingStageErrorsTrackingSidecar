@@ -4459,6 +4459,7 @@ dependencies = [
 [[package]]
 name = "yellowstone-grpc-client"
 version = "1.9.0+solana.1.16.13"
+source = "git+https://github.com/blockworks-foundation/yellowstone-grpc.git?branch=geyser_get_banking_transaction_results#e11327557497a364da38482f178598dcd339cddb"
 dependencies = [
  "bytes",
  "futures",
@@ -4472,6 +4473,7 @@ dependencies = [
 [[package]]
 name = "yellowstone-grpc-proto"
 version = "1.9.0+solana.1.16.13"
+source = "git+https://github.com/blockworks-foundation/yellowstone-grpc.git?branch=geyser_get_banking_transaction_results#e11327557497a364da38482f178598dcd339cddb"
 dependencies = [
  "anyhow",
  "prost",
