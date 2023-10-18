@@ -24,3 +24,14 @@ CREATE TABLE banking_stage_results.blocks (
   total_cu_requested BIGINT,
   heavily_writelocked_accounts text[]
 );
+
+
+CREATE INDEX idx_blocks_slot ON banking_stage_results.blocks(slot);
+-- optional
+CLUSTER banking_stage_results.blocks using idx_blocks_slot;
+VACUUM FULL banking_stage_results.blocks;
+
+CREATE INDEX idx_transaction_infos_timestamp ON banking_stage_results.transaction_infos(utc_timestamp);
+-- optional
+CLUSTER banking_stage_results.transaction_infos using idx_transaction_infos_timestamp;
+VACUUM FULL banking_stage_results.transaction_infos;
