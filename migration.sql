@@ -11,6 +11,7 @@ CREATE TABLE banking_stage_results.transaction_infos (
   prioritization_fees BIGINT,
   utc_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
   accounts_used text[]
+  processed_slot BIGINT,
 );
 
 CREATE TABLE banking_stage_results.blocks (

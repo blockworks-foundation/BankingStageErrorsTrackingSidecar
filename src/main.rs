@@ -1,9 +1,11 @@
+use clap::Parser;
 use std::{
     collections::HashMap,
     sync::{atomic::AtomicU64, Arc},
 };
 
 use block_info::BlockInfo;
+use cli::Args;
 use dashmap::DashMap;
 use futures::StreamExt;
 use solana_sdk::signature::Signature;
@@ -14,12 +16,14 @@ use yellowstone_grpc_proto::prelude::{
 };
 
 mod block_info;
+mod cli;
 mod postgres;
 mod transaction_info;
 
 #[tokio::main()]
 async fn main() {
-    let grpc_addr = "http://127.0.0.1:10000";
+    let args = Args::parse();
+    let grpc_addr = args.grpc_address;
     let mut client = GeyserGrpcClient::connect(grpc_addr, None::<&'static str>, None).unwrap();
     let map_of_infos = Arc::new(DashMap::<String, TransactionInfo>::new());
 
@@ -87,7 +91,7 @@ async fn main() {
                     };
                     let signature = Signature::try_from(tx.signatures[0].clone()).unwrap();
                     if let Some(mut info) = map_of_infos.get_mut(&signature.to_string()) {
-                        info.add_transaction(&transaction);
+                        info.add_transaction(&transaction, block.slot);
                     }
                 }
 

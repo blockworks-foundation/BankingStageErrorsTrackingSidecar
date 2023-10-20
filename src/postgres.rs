@@ -101,12 +101,13 @@ impl PostgresSession {
             args.push(&tx.prioritization_fees);
             args.push(&tx.utc_timestamp);
             args.push(&tx.accounts_used);
+            args.push(&tx.processed_slot);
         }
 
         let mut query = String::from(
             r#"
                 INSERT INTO banking_stage_results.transaction_infos 
-                (signature, message, errors, is_executed, is_confirmed, first_notification_slot, cu_requested, prioritization_fees, utc_timestamp, accounts_used)
+                (signature, message, errors, is_executed, is_confirmed, first_notification_slot, cu_requested, prioritization_fees, utc_timestamp, accounts_used, processed_slot)
                 VALUES
             "#,
         );
@@ -207,6 +208,7 @@ pub struct PostgresTransactionInfo {
     pub prioritization_fees: Option<i64>,
     pub utc_timestamp: DateTime<Utc>,
     pub accounts_used: Vec<String>,
+    pub processed_slot: Option<i64>,
 }
 
 impl From<&TransactionInfo> for PostgresTransactionInfo {
@@ -234,6 +236,7 @@ impl From<&TransactionInfo> for PostgresTransactionInfo {
             prioritization_fees: value.prioritization_fees.map(|x| x as i64),
             utc_timestamp: value.utc_timestamp,
             accounts_used,
+            processed_slot: value.processed_slot.map(|x| x as i64),
         }
     }
 }

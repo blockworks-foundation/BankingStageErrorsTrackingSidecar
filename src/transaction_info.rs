@@ -92,6 +92,7 @@ pub struct TransactionInfo {
     pub prioritization_fees: Option<u64>,
     pub utc_timestamp: DateTime<Utc>,
     pub account_used: HashMap<Pubkey, char>,
+    pub processed_slot: Option<Slot>,
 }
 
 impl TransactionInfo {
@@ -134,6 +135,7 @@ impl TransactionInfo {
             prioritization_fees: None,
             utc_timestamp,
             account_used,
+            processed_slot: None,
         }
     }
 
@@ -158,7 +160,7 @@ impl TransactionInfo {
         }
     }
 
-    pub fn add_transaction(&mut self, transaction: &SubscribeUpdateTransactionInfo) {
+    pub fn add_transaction(&mut self, transaction: &SubscribeUpdateTransactionInfo, slot: Slot) {
         let Some(transaction) = &transaction.transaction else {
             return;
         };
@@ -282,5 +284,6 @@ impl TransactionInfo {
         self.is_confirmed = true;
         self.transaction_message = Some(message);
         self.is_executed = true;
+        self.processed_slot = Some(slot);
     }
 }
