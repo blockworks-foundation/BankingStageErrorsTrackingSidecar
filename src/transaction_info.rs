@@ -1,8 +1,21 @@
-use std::{collections::HashMap, hash::Hash};
+use std::{collections::HashMap, hash::Hash, str::FromStr};
 
 use chrono::{DateTime, Utc};
-use solana_sdk::{slot_history::Slot, transaction::TransactionError, message::{VersionedMessage, v0::{self, MessageAddressTableLookup}, MessageHeader}, pubkey::Pubkey, instruction::CompiledInstruction, compute_budget::{self, ComputeBudgetInstruction}, borsh0_10::try_from_slice_unchecked};
-use yellowstone_grpc_proto::prelude::{SubscribeUpdateBankingTransactionResults, SubscribeUpdateTransactionInfo};
+use solana_sdk::{
+    borsh0_10::try_from_slice_unchecked,
+    compute_budget::{self, ComputeBudgetInstruction},
+    instruction::CompiledInstruction,
+    message::{
+        v0::{self, MessageAddressTableLookup},
+        MessageHeader, VersionedMessage,
+    },
+    pubkey::Pubkey,
+    slot_history::Slot,
+    transaction::TransactionError,
+};
+use yellowstone_grpc_proto::prelude::{
+    SubscribeUpdateBankingTransactionResults, SubscribeUpdateTransactionInfo,
+};
 
 fn convert_transaction_error_into_int(error: &TransactionError) -> u8 {
     match error {
@@ -87,16 +100,29 @@ impl TransactionInfo {
         let is_executed = notification.error.is_none();
         // Get time
         let utc_timestamp = Utc::now();
-        
+
         match &notification.error {
             Some(e) => {
                 let error: TransactionError = bincode::deserialize(&e.err).unwrap();
-                let key = ErrorKey { error, slot: notification.slot };
-                errors.insert( key, 1);
-            },
-            None => {
+                let key = ErrorKey {
+                    error,
+                    slot: notification.slot,
+                };
+                errors.insert(key, 1);
             }
+            None => {}
         };
+
+        let account_used = notification
+            .accounts
+            .iter()
+            .map(|x| {
+                (
+                    Pubkey::from_str(&x.account).unwrap(),
+                    if x.is_writable { 'w' } else { 'r' },
+                )
+            })
+            .collect();
         Self {
             signature: notification.signature.clone(),
             transaction_message: None,
@@ -107,8 +133,7 @@ impl TransactionInfo {
             cu_requested: None,
             prioritization_fees: None,
             utc_timestamp,
-            account_used: HashMap::new(),
-
+            account_used,
         }
     }
 
@@ -134,7 +159,6 @@ impl TransactionInfo {
     }
 
     pub fn add_transaction(&mut self, transaction: &SubscribeUpdateTransactionInfo) {
-
         let Some(transaction) = &transaction.transaction else {
             return;
         };
@@ -154,17 +178,18 @@ impl TransactionInfo {
                 num_readonly_unsigned_accounts: header.num_readonly_unsigned_accounts as u8,
             },
             account_keys: message
-                .account_keys.clone()
+                .account_keys
+                .clone()
                 .into_iter()
                 .map(|key| {
-                    let bytes: [u8; 32] =
-                        key.try_into().unwrap_or(Pubkey::default().to_bytes());
+                    let bytes: [u8; 32] = key.try_into().unwrap_or(Pubkey::default().to_bytes());
                     Pubkey::new_from_array(bytes)
                 })
                 .collect(),
             recent_blockhash: solana_sdk::hash::Hash::new(&message.recent_blockhash),
             instructions: message
-                .instructions.clone()
+                .instructions
+                .clone()
                 .into_iter()
                 .map(|ix| CompiledInstruction {
                     program_id_index: ix.program_id_index as u8,
@@ -173,7 +198,8 @@ impl TransactionInfo {
                 })
                 .collect(),
             address_table_lookups: message
-                .address_table_lookups.clone()
+                .address_table_lookups
+                .clone()
                 .into_iter()
                 .map(|table| {
                     let bytes: [u8; 32] = table
@@ -200,10 +226,7 @@ impl TransactionInfo {
                     }) = try_from_slice_unchecked(i.data.as_slice())
                     {
                         if additional_fee > 0 {
-                            return Some((
-                                units,
-                                Some(((units * 1000) / additional_fee) as u64),
-                            ));
+                            return Some((units, Some(((units * 1000) / additional_fee) as u64)));
                         } else {
                             return Some((units, None));
                         }
@@ -249,9 +272,6 @@ impl TransactionInfo {
                 None
             })
             .or(legacy_prioritization_fees);
-
-        let account_used: HashMap<Pubkey, char> = message.static_account_keys().iter().enumerate().map(|(index, x)| (x.clone(), if message.is_maybe_writable(index) {'w'} else {'r'})).collect();
-
         if let Some(cu_requested) = cu_requested {
             self.cu_requested = Some(cu_requested as u64);
         }
@@ -262,6 +282,5 @@ impl TransactionInfo {
         self.is_confirmed = true;
         self.transaction_message = Some(message);
         self.is_executed = true;
-        self.account_used = account_used;
     }
 }

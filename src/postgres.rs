@@ -1,13 +1,15 @@
-use std::{sync::{Arc, atomic::AtomicU64}, time::Duration};
+use std::{
+    sync::{atomic::AtomicU64, Arc},
+    time::Duration,
+};
 
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use itertools::Itertools;
-use tokio_postgres::{Client, NoTls, tls::MakeTlsConnect, Socket, types::ToSql};
+use tokio_postgres::{tls::MakeTlsConnect, types::ToSql, Client, NoTls, Socket};
 
-use crate::{transaction_info::TransactionInfo, block_info::BlockInfo};
-
+use crate::{block_info::BlockInfo, transaction_info::TransactionInfo};
 
 pub struct PostgresSession {
     client: Client,
@@ -18,8 +20,7 @@ impl PostgresSession {
         let pg_config = std::env::var("PG_CONFIG").context("env PG_CONFIG not found")?;
         let pg_config = pg_config.parse::<tokio_postgres::Config>()?;
 
-        let client =
-            Self::spawn_connection(pg_config, NoTls).await?;
+        let client = Self::spawn_connection(pg_config, NoTls).await?;
 
         Ok(Self { client })
     }
@@ -75,14 +76,20 @@ impl PostgresSession {
         }
     }
 
-    pub async fn save_banking_transaction_results(&self, txs: &[TransactionInfo]) -> anyhow::Result<()> {
+    pub async fn save_banking_transaction_results(
+        &self,
+        txs: &[TransactionInfo],
+    ) -> anyhow::Result<()> {
         if txs.is_empty() {
             return Ok(());
         }
-        const NUMBER_OF_ARGS : usize = 10;
+        const NUMBER_OF_ARGS: usize = 10;
 
         let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS * txs.len());
-        let txs: Vec<PostgresTransactionInfo> = txs.iter().map(|x| PostgresTransactionInfo::from(x)).collect();
+        let txs: Vec<PostgresTransactionInfo> = txs
+            .iter()
+            .map(|x| PostgresTransactionInfo::from(x))
+            .collect();
         for tx in txs.iter() {
             args.push(&tx.signature);
             args.push(&tx.transaction_message);
@@ -110,8 +117,8 @@ impl PostgresSession {
         Ok(())
     }
 
-    pub async fn save_block(&self, block_info: BlockInfo) -> anyhow::Result<()>  {
-        const NUMBER_OF_ARGS : usize = 9; 
+    pub async fn save_block(&self, block_info: BlockInfo) -> anyhow::Result<()> {
+        const NUMBER_OF_ARGS: usize = 9;
         let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS);
         args.push(&block_info.block_hash);
         args.push(&block_info.slot);
@@ -145,10 +152,16 @@ pub struct Postgres {
 impl Postgres {
     pub async fn new() -> Self {
         let session = PostgresSession::new().await.unwrap();
-        Self { session: Arc::new(session) }
+        Self {
+            session: Arc::new(session),
+        }
     }
 
-    pub fn start_saving_transaction(&self, map_of_transaction : Arc<DashMap<String, TransactionInfo>>, slots : Arc<AtomicU64>) {
+    pub fn start_saving_transaction(
+        &self,
+        map_of_transaction: Arc<DashMap<String, TransactionInfo>>,
+        slots: Arc<AtomicU64>,
+    ) {
         let session = self.session.clone();
         tokio::task::spawn(async move {
             loop {
@@ -168,7 +181,10 @@ impl Postgres {
                     }
                     let batches = txs_to_store.chunks(8).collect_vec();
                     for batch in batches {
-                        session.save_banking_transaction_results(batch).await.unwrap();
+                        session
+                            .save_banking_transaction_results(batch)
+                            .await
+                            .unwrap();
                     }
                 }
             }
@@ -199,10 +215,17 @@ impl From<&TransactionInfo> for PostgresTransactionInfo {
             let str = is + x.0.to_string().as_str() + ":" + x.1.to_string().as_str() + ";";
             str
         });
-        let accounts_used = value.account_used.iter().map(|x| format!("{}({})", x.0, x.1).to_string()).collect();
+        let accounts_used = value
+            .account_used
+            .iter()
+            .map(|x| format!("{}({})", x.0, x.1).to_string())
+            .collect();
         Self {
             signature: value.signature.clone(),
-            transaction_message: value.transaction_message.as_ref().map(|x| base64::encode(bincode::serialize(&x).unwrap())),
+            transaction_message: value
+                .transaction_message
+                .as_ref()
+                .map(|x| base64::encode(bincode::serialize(&x).unwrap())),
             errors,
             is_executed: value.is_executed,
             is_confirmed: value.is_confirmed,

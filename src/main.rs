@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::{Arc, atomic::AtomicU64}};
+use std::{
+    collections::HashMap,
+    sync::{atomic::AtomicU64, Arc},
+};
 
 use block_info::BlockInfo;
 use dashmap::DashMap;
@@ -10,9 +13,10 @@ use yellowstone_grpc_proto::prelude::{
     subscribe_update::UpdateOneof, CommitmentLevel, SubscribeRequestFilterBlocks,
 };
 
-mod transaction_info;
-mod postgres;
 mod block_info;
+mod postgres;
+mod transaction_info;
+mod cli;
 
 #[tokio::main()]
 async fn main() {
@@ -72,10 +76,7 @@ async fn main() {
                     None => {
                         let mut x = TransactionInfo::new(&transaction);
                         x.add_notification(&transaction);
-                        map_of_infos.insert(
-                            sig,
-                            x,
-                        );
+                        map_of_infos.insert(sig, x);
                     }
                 }
             }
@@ -96,8 +97,7 @@ async fn main() {
                     log::error!("Error saving block {}", e);
                 }
             }
-            _ => {
-            }
+            _ => {}
         };
     }
 }
