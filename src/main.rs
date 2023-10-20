@@ -16,7 +16,6 @@ use yellowstone_grpc_proto::prelude::{
 mod block_info;
 mod postgres;
 mod transaction_info;
-mod cli;
 
 #[tokio::main()]
 async fn main() {
