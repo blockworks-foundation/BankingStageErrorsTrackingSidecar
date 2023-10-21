@@ -202,7 +202,7 @@ impl BlockInfo {
         heavily_writelocked_accounts.sort_by(|lhs, rhs| (*rhs.1).cmp(lhs.1));
         let heavily_writelocked_accounts = heavily_writelocked_accounts
             .iter()
-            .map(|(pubkey, cu)| format!("{}:{}", **pubkey, **cu))
+            .map(|(pubkey, cu)| format!("({}, {})", **pubkey, **cu))
             .collect_vec();
         BlockInfo {
             block_hash,

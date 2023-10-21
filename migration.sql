@@ -1,21 +1,37 @@
 CREATE SCHEMA banking_stage_results;
 
+CREATE TYPE error AS (
+    error   text,
+    slot    BIGINT,
+    count   BIGINT
+);
+
+CREATE TYPE ACCOUNT_USED AS (
+  account CHAR(44),
+  r_w     CHAR
+);
+
+CREATE TYPE ACCOUNT_USE_COUNT AS (
+  account CHAR(44),
+  cu     BIGINT
+);
+
 CREATE TABLE banking_stage_results.transaction_infos (
-  signature CHAR(88) NOT NULL,
+  signature CHAR(88) PRIMARY KEY,
   message text,
-  errors text,
+  errors ERROR[],
   is_executed BOOL,
   is_confirmed BOOL,
   first_notification_slot BIGINT NOT NULL,
   cu_requested BIGINT,
   prioritization_fees BIGINT,
   utc_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-  accounts_used text[]
-  processed_slot BIGINT,
+  accounts_used ACCOUNT_USED[],
+  processed_slot BIGINT
 );
 
 CREATE TABLE banking_stage_results.blocks (
-  block_hash CHAR(44) NOT NULL,
+  block_hash CHAR(44) PRIMARY KEY,
   slot BIGINT,
   leader_identity CHAR(44),
   successful_transactions BIGINT,
@@ -23,7 +39,15 @@ CREATE TABLE banking_stage_results.blocks (
   processed_transactions BIGINT,
   total_cu_used BIGINT,
   total_cu_requested BIGINT,
-  heavily_writelocked_accounts text[]
+  heavily_writelocked_accounts ACCOUNT_USE_COUNT[]
+);
+
+CREATE TABLE banking_stage_results.accounts (
+  account CHAR(44) PRIMARY KEY,
+  account_borrow_outstanding BIGINT,
+  account_in_use_write BIGINT,
+  account_in_use_read BIGINT,
+  would_exceed_maximum_account_cost_limit BIGINT
 );
 
 

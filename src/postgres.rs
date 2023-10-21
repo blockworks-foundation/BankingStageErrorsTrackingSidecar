@@ -200,7 +200,7 @@ impl Postgres {
 pub struct PostgresTransactionInfo {
     pub signature: String,
     pub transaction_message: Option<String>,
-    pub errors: String,
+    pub errors: Vec<String>,
     pub is_executed: bool,
     pub is_confirmed: bool,
     pub first_notification_slot: i64,
@@ -213,14 +213,15 @@ pub struct PostgresTransactionInfo {
 
 impl From<&TransactionInfo> for PostgresTransactionInfo {
     fn from(value: &TransactionInfo) -> Self {
-        let errors = value.errors.iter().fold(String::new(), |is, x| {
-            let str = is + x.0.to_string().as_str() + ":" + x.1.to_string().as_str() + ";";
-            str
-        });
+        let errors = value
+            .errors
+            .iter()
+            .map(|(key, size)| format!("({}, {}, {})", key.error, key.slot, size))
+            .collect_vec();
         let accounts_used = value
             .account_used
             .iter()
-            .map(|x| format!("{}({})", x.0, x.1).to_string())
+            .map(|x| format!("({}, {})", x.0, x.1))
             .collect();
         Self {
             signature: value.signature.clone(),
