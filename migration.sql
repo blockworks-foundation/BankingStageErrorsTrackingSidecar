@@ -31,8 +31,10 @@ CREATE INDEX idx_blocks_slot ON banking_stage_results.blocks(slot);
 -- optional
 CLUSTER banking_stage_results.blocks using idx_blocks_slot;
 VACUUM FULL banking_stage_results.blocks;
+CREATE INDEX idx_blocks_slot_errors ON banking_stage_results.blocks(slot) WHERE banking_stage_errors > 0;
 
 CREATE INDEX idx_transaction_infos_timestamp ON banking_stage_results.transaction_infos(utc_timestamp);
 -- optional
 CLUSTER banking_stage_results.transaction_infos using idx_transaction_infos_timestamp;
 VACUUM FULL banking_stage_results.transaction_infos;
+
