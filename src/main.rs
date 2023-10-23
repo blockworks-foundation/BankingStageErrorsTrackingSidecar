@@ -68,6 +68,7 @@ async fn main() {
 
         match update {
             UpdateOneof::BankingTransactionErrors(transaction) => {
+                log::info!("got banking stage transaction erros");
                 if transaction.error.is_none() {
                     continue;
                 }
@@ -84,6 +85,7 @@ async fn main() {
                 }
             }
             UpdateOneof::Block(block) => {
+                log::info!("got block");
                 slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
                 for transaction in &block.transactions {
                     let Some(tx) = &transaction.transaction else {
