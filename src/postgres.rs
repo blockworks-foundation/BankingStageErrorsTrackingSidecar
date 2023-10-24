@@ -216,12 +216,12 @@ impl From<&TransactionInfo> for PostgresTransactionInfo {
         let errors = value
             .errors
             .iter()
-            .map(|(key, size)| format!("({}, {}, {})", key.error, key.slot, size))
+            .map(|(key, size)| format!("key:{}, slot:{}, count:{}", key.error, key.slot, size))
             .collect_vec();
         let accounts_used = value
             .account_used
             .iter()
-            .map(|x| format!("({}, {})", x.0, x.1))
+            .map(|x| format!("{}({})", x.0, x.1))
             .collect();
         Self {
             signature: value.signature.clone(),

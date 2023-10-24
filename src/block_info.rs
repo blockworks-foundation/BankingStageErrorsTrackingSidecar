@@ -73,7 +73,7 @@ impl BlockInfo {
                     .unwrap_or(0)
             })
             .sum::<u64>() as i64;
-        let mut writelocked_accounts = HashMap::new();
+        let mut writelocked_accounts: HashMap<Pubkey, (u64, u64)> = HashMap::new();
         let mut total_cu_requested: u64 = 0;
         for transaction in &block.transactions {
             let Some(tx) = &transaction.transaction else {
@@ -85,6 +85,10 @@ impl BlockInfo {
             };
 
             let Some(header) = &message.header else {
+                continue;
+            };
+
+            let Some(meta) = &transaction.meta else {
                 continue;
             };
 
@@ -175,7 +179,9 @@ impl BlockInfo {
                 })
                 .or(legacy_cu_requested);
             let cu_requested = cu_requested.unwrap_or(200000) as u64;
+            let cu_consumed = meta.compute_units_consumed.unwrap_or(0);
             total_cu_requested = total_cu_requested + cu_requested;
+
             let writable_accounts = message
                 .static_account_keys()
                 .iter()
@@ -186,10 +192,12 @@ impl BlockInfo {
             for writable_account in writable_accounts {
                 match writelocked_accounts.get_mut(&writable_account) {
                     Some(x) => {
-                        *x += cu_requested;
+                        x.0 += cu_requested;
+                        x.1 += cu_consumed;
+
                     }
                     None => {
-                        writelocked_accounts.insert(writable_account, cu_requested);
+                        writelocked_accounts.insert(writable_account, (cu_requested, cu_consumed));
                     }
                 }
             }
@@ -197,12 +205,12 @@ impl BlockInfo {
 
         let mut heavily_writelocked_accounts = writelocked_accounts
             .iter()
-            .filter(|x| *x.1 > 1000000)
+            .filter(|x| x.1.1 > 1000000)
             .collect_vec();
         heavily_writelocked_accounts.sort_by(|lhs, rhs| (*rhs.1).cmp(lhs.1));
         let heavily_writelocked_accounts = heavily_writelocked_accounts
             .iter()
-            .map(|(pubkey, cu)| format!("({}, {})", **pubkey, **cu))
+            .map(|(pubkey, (cu_req, cu_con))| format!("(k:{}, cu_req:{}, cu_con:{})", **pubkey, *cu_req, *cu_con))
             .collect_vec();
         BlockInfo {
             block_hash,
