@@ -83,7 +83,7 @@ impl PostgresSession {
         if txs.is_empty() {
             return Ok(());
         }
-        const NUMBER_OF_ARGS: usize = 10;
+        const NUMBER_OF_ARGS: usize = 11;
 
         let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS * txs.len());
         let txs: Vec<PostgresTransactionInfo> = txs
