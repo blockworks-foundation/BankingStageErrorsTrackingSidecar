@@ -83,7 +83,7 @@ impl PostgresSession {
         if txs.is_empty() {
             return Ok(());
         }
-        const NUMBER_OF_ARGS: usize = 10;
+        const NUMBER_OF_ARGS: usize = 11;
 
         let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS * txs.len());
         let txs: Vec<PostgresTransactionInfo> = txs
@@ -216,12 +216,12 @@ impl From<&TransactionInfo> for PostgresTransactionInfo {
         let errors = value
             .errors
             .iter()
-            .map(|(key, size)| format!("({}, {}, {})", key.error, key.slot, size))
+            .map(|(key, size)| format!("key:{}, slot:{}, count:{}", key.error, key.slot, size))
             .collect_vec();
         let accounts_used = value
             .account_used
             .iter()
-            .map(|x| format!("({}, {})", x.0, x.1))
+            .map(|x| format!("{}({})", x.0, x.1))
             .collect();
         Self {
             signature: value.signature.clone(),

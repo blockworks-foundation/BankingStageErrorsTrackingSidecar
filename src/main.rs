@@ -60,7 +60,9 @@ async fn main() {
     postgres.start_saving_transaction(map_of_infos.clone(), slot.clone());
 
     while let Some(message) = stream.next().await {
-        let message = message.unwrap();
+        let Ok(message) = message else {
+            continue;
+        };
 
         let Some(update) = message.update_oneof else {
                     continue;
@@ -68,9 +70,7 @@ async fn main() {
 
         match update {
             UpdateOneof::BankingTransactionErrors(transaction) => {
-                if transaction.error.is_none() {
-                    continue;
-                }
+                log::info!("got banking stage transaction erros");
                 let sig = transaction.signature.to_string();
                 match map_of_infos.get_mut(&sig) {
                     Some(mut x) => {
@@ -84,6 +84,7 @@ async fn main() {
                 }
             }
             UpdateOneof::Block(block) => {
+                log::info!("got block");
                 slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
                 for transaction in &block.transactions {
                     let Some(tx) = &transaction.transaction else {
