@@ -70,6 +70,9 @@ async fn main() {
 
         match update {
             UpdateOneof::BankingTransactionErrors(transaction) => {
+                if transaction.error.is_none() {
+                    continue;
+                }
                 log::info!("got banking stage transaction erros");
                 let sig = transaction.signature.to_string();
                 match map_of_infos.get_mut(&sig) {

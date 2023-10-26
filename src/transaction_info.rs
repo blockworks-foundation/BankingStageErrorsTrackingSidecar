@@ -155,7 +155,6 @@ impl TransactionInfo {
                 }
             }
             None => {
-                self.is_executed = true;
             }
         }
     }
