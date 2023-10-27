@@ -26,6 +26,7 @@ async fn main() {
     let grpc_addr = args.grpc_address;
     let mut client = GeyserGrpcClient::connect(grpc_addr, None::<&'static str>, None).unwrap();
     let map_of_infos = Arc::new(DashMap::<String, TransactionInfo>::new());
+    let slot_by_errors = Arc::new(DashMap::<u64, u64>::new());
 
     let postgres = postgres::Postgres::new().await;
     let slot = Arc::new(AtomicU64::new(0));
@@ -65,8 +66,8 @@ async fn main() {
         };
 
         let Some(update) = message.update_oneof else {
-                    continue;
-                };
+            continue;
+        };
 
         match update {
             UpdateOneof::BankingTransactionErrors(transaction) => {
@@ -75,6 +76,14 @@ async fn main() {
                 }
                 log::info!("got banking stage transaction erros");
                 let sig = transaction.signature.to_string();
+                match slot_by_errors.get_mut(&transaction.slot) {
+                    Some(mut value) => {
+                        *value = *value + 1;
+                    }
+                    None => {
+                        slot_by_errors.insert(transaction.slot, 1);
+                    }
+                }
                 match map_of_infos.get_mut(&sig) {
                     Some(mut x) => {
                         x.add_notification(&transaction);
@@ -99,7 +108,7 @@ async fn main() {
                     }
                 }
 
-                let block_info = BlockInfo::new(&block, map_of_infos.clone());
+                let block_info = BlockInfo::new(&block, &slot_by_errors);
                 if let Err(e) = postgres.save_block_info(block_info).await {
                     log::error!("Error saving block {}", e);
                 }

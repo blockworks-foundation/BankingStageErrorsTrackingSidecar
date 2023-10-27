@@ -154,8 +154,7 @@ impl TransactionInfo {
                     }
                 }
             }
-            None => {
-            }
+            None => {}
         }
     }
 
