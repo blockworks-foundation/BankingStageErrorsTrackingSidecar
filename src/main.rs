@@ -127,7 +127,7 @@ async fn main() {
                 log::info!("got block");
                 slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
 
-                send_block.send(( Instant::now() + Duration::from_secs(120), block)).expect("should works");
+                send_block.send(( Instant::now() + Duration::from_secs(30), block)).expect("should works");
                 // delay queue so that we get all the banking stage errors before processing block
             }
             _ => {}
