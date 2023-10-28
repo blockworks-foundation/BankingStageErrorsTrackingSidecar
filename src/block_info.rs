@@ -138,7 +138,7 @@ impl BlockInfo {
                             if additional_fee > 0 {
                                 return Some((
                                     units,
-                                    Some(((units * 1000) / additional_fee) as u64),
+                                    Some(((units.saturating_mul(1000)).saturating_div(additional_fee)) as u64),
                                 ));
                             } else {
                                 return Some((units, None));
