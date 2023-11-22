@@ -1,0 +1,6 @@
+app = "solana-bankingstage-geyser-sidecar"
+kill_signal = "SIGINT"
+kill_timeout = 5
+
+[env]
+  RUST_LOG = "info"
