@@ -9,6 +9,7 @@ use block_info::BlockInfo;
 use cli::Args;
 use dashmap::DashMap;
 use futures::StreamExt;
+use log::info;
 use solana_sdk::signature::Signature;
 use transaction_info::TransactionInfo;
 use yellowstone_grpc_client::GeyserGrpcClient;
@@ -23,6 +24,8 @@ mod transaction_info;
 
 #[tokio::main()]
 async fn main() {
+    tracing_subscriber::fmt::init();
+
     let args = Args::parse();
     let grpc_addr = args.grpc_address;
     let mut client = GeyserGrpcClient::connect(grpc_addr, None::<&'static str>, None).unwrap();

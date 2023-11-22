@@ -1,6 +1,8 @@
 app = "solana-bankingstage-geyser-sidecar"
+primary_region = "nrt"
 kill_signal = "SIGINT"
-kill_timeout = 5
+kill_timeout = "5s"
 
 [env]
-  RUST_LOG = "info"
+  RUST_LOG = "info,grpc_banking_transactions_notifications=debug"
+
