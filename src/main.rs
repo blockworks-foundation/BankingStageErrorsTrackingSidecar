@@ -9,7 +9,7 @@ use block_info::BlockInfo;
 use cli::Args;
 use dashmap::DashMap;
 use futures::StreamExt;
-use log::info;
+use log::{debug, error, info};
 use prometheus::{IntCounter, IntGauge, opts, register_int_counter, register_int_gauge};
 use solana_sdk::signature::Signature;
 use transaction_info::TransactionInfo;
@@ -62,7 +62,7 @@ async fn main() {
     );
     let commitment_level = CommitmentLevel::Processed;
 
-    let mut stream = client
+    let mut geyser_stream = client
         .subscribe_once(
             HashMap::new(),
             Default::default(),
@@ -104,14 +104,14 @@ async fn main() {
             BANKING_STAGE_ERROR_COUNT.set(block_info.banking_stage_errors);
             TXERROR_COUNT.set(block_info.processed_transactions - block_info.successful_transactions);
             if let Err(e) = postgres.save_block_info(block_info).await {
-                log::error!("Error saving block {}", e);
+                error!("Error saving block {}", e);
             }
             info!("saved block {}", block.slot);
         }
     });
 
 
-    while let Some(message) = stream.next().await {
+    while let Some(message) = geyser_stream.next().await {
         let Ok(message) = message else {
             continue;
         };
@@ -147,7 +147,7 @@ async fn main() {
                 }
             }
             UpdateOneof::Block(block) => {
-                log::debug!("got block {}", block.slot);
+                debug!("got block {}", block.slot);
                 BLOCK_TXS.set(block.transactions.len() as i64);
                 slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
                 send_block.send(( Instant::now() + Duration::from_secs(30), block)).expect("should works");

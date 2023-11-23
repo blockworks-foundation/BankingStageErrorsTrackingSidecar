@@ -7,7 +7,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use itertools::Itertools;
-use log::debug;
+use log::{debug, error, info};
 use tokio_postgres::{tls::MakeTlsConnect, types::ToSql, Client, NoTls, Socket};
 
 use crate::{block_info::BlockInfo, transaction_info::TransactionInfo};
@@ -40,10 +40,10 @@ impl PostgresSession {
             .context("Connecting to Postgres failed")?;
 
         tokio::spawn(async move {
-            log::info!("Connecting to Postgres");
+            info!("Connecting to Postgres");
 
             if let Err(err) = connection.await {
-                log::error!("Connection to Postgres broke {err:?}");
+                error!("Connection to Postgres broke {err:?}");
                 return;
             }
             unreachable!("Postgres thread returned")
