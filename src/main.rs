@@ -26,6 +26,8 @@ mod transaction_info;
 mod prometheus_sync;
 
 lazy_static::lazy_static! {
+     static ref BLOCK_TXS: IntGauge =
+        register_int_gauge!(opts!("block_arrived", "block seen with n transactions (use for liveness check)")).unwrap();
     static ref BANKING_STAGE_ERROR_COUNT: IntGauge =
         register_int_gauge!(opts!("bankingstage_banking_errors", "banking_stage errors in block")).unwrap();
     static ref TXERROR_COUNT: IntGauge =
@@ -39,7 +41,6 @@ async fn main() {
     let args = Args::parse();
 
     let _prometheus_jh = PrometheusSync::sync(args.prometheus_addr.clone());
-
 
     let grpc_addr = args.grpc_address;
     let mut client = GeyserGrpcClient::connect(grpc_addr, None::<&'static str>, None).unwrap();
@@ -76,7 +77,7 @@ async fn main() {
         .await
         .unwrap();
 
-    postgres.start_saving_transaction(map_of_infos.clone(), slot.clone());
+    postgres.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());
 
     let (send_block, mut recv_block) = tokio::sync::mpsc::unbounded_channel::<(Instant, SubscribeUpdateBlock)>();
     let slot_by_error_task = slot_by_errors.clone();
@@ -147,8 +148,8 @@ async fn main() {
             }
             UpdateOneof::Block(block) => {
                 log::debug!("got block {}", block.slot);
+                BLOCK_TXS.set(block.transactions.len() as i64);
                 slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
-
                 send_block.send(( Instant::now() + Duration::from_secs(30), block)).expect("should works");
                 // delay queue so that we get all the banking stage errors before processing block
             }

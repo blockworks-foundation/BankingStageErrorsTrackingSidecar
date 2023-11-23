@@ -7,6 +7,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use itertools::Itertools;
+use log::debug;
 use tokio_postgres::{tls::MakeTlsConnect, types::ToSql, Client, NoTls, Socket};
 
 use crate::{block_info::BlockInfo, transaction_info::TransactionInfo};
@@ -158,7 +159,7 @@ impl Postgres {
         }
     }
 
-    pub fn start_saving_transaction(
+    pub fn spawn_transaction_infos_saver(
         &self,
         map_of_transaction: Arc<DashMap<String, TransactionInfo>>,
         slots: Arc<AtomicU64>,
@@ -176,7 +177,7 @@ impl Postgres {
                 }
 
                 if !txs_to_store.is_empty() {
-                    println!("saving {}", txs_to_store.len());
+                    debug!("saving transaction infos for {}", txs_to_store.len());
                     for tx in &txs_to_store {
                         map_of_transaction.remove(&tx.signature);
                     }
