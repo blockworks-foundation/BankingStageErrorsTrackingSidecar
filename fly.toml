@@ -7,5 +7,5 @@ kill_timeout = "5s"
   RUST_LOG = "info,grpc_banking_transactions_notifications=debug"
 
 [metrics]
-  path = "/metrics"
+  path = "/"
   port = 9091
