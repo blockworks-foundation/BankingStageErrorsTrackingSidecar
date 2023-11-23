@@ -11,6 +11,8 @@ use itertools::Itertools;
 use log::{debug, error, info};
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
+use serde::Serialize;
+use solana_sdk::transaction::TransactionError;
 use tokio_postgres::{config::SslMode, tls::MakeTlsConnect, types::ToSql, Client, NoTls, Socket};
 
 use crate::{block_info::BlockInfo, transaction_info::TransactionInfo};
@@ -158,12 +160,17 @@ impl PostgresSession {
         args.push(&block_info.processed_transactions);
         args.push(&block_info.total_cu_used);
         args.push(&block_info.total_cu_requested);
-        args.push(&block_info.heavily_writelocked_accounts);
+        let heavily_writelocked_accounts =
+            serde_json::to_string(&block_info.heavily_writelocked_accounts).unwrap_or_default();
+        let heavily_readlocked_accounts =
+            serde_json::to_string(&block_info.heavily_readlocked_accounts).unwrap_or_default();
+        args.push(&heavily_writelocked_accounts);
+        args.push(&heavily_readlocked_accounts);
 
         let mut query = String::from(
             r#"
                 INSERT INTO banking_stage_results.blocks 
-                (block_hash, slot, leader_identity, successful_transactions, banking_stage_errors, processed_transactions, total_cu_used, total_cu_requested, heavily_writelocked_accounts)
+                (block_hash, slot, leader_identity, successful_transactions, banking_stage_errors, processed_transactions, total_cu_used, total_cu_requested, heavily_writelocked_accounts, heavily_readlocked_accounts)
                 VALUES
             "#,
         );
@@ -190,13 +197,13 @@ impl Postgres {
     pub fn spawn_transaction_infos_saver(
         &self,
         map_of_transaction: Arc<DashMap<String, TransactionInfo>>,
-        slots: Arc<AtomicU64>,
+        slot: Arc<AtomicU64>,
     ) {
         let session = self.session.clone();
         tokio::task::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(60)).await;
-                let slot = slots.load(std::sync::atomic::Ordering::Relaxed);
+                let slot = slot.load(std::sync::atomic::Ordering::Relaxed);
                 let mut txs_to_store = vec![];
                 for tx in map_of_transaction.iter() {
                     if slot > tx.first_notification_slot + 300 {
@@ -228,7 +235,7 @@ impl Postgres {
 
 pub struct PostgresTransactionInfo {
     pub signature: String,
-    pub errors: Vec<String>,
+    pub errors: String,
     pub is_executed: bool,
     pub is_confirmed: bool,
     pub first_notification_slot: i64,
@@ -239,12 +246,23 @@ pub struct PostgresTransactionInfo {
     pub processed_slot: Option<i64>,
 }
 
+#[derive(Serialize, Clone)]
+pub struct TransactionErrorData {
+    error: TransactionError,
+    slot: u64,
+    count: usize,
+}
+
 impl From<&TransactionInfo> for PostgresTransactionInfo {
     fn from(value: &TransactionInfo) -> Self {
         let errors = value
             .errors
             .iter()
-            .map(|(key, size)| format!("key:{}, slot:{}, count:{}", key.error, key.slot, size))
+            .map(|(key, count)| TransactionErrorData {
+                error: key.error.clone(),
+                slot: key.slot,
+                count: *count,
+            })
             .collect_vec();
         let accounts_used = value
             .account_used
@@ -253,7 +271,7 @@ impl From<&TransactionInfo> for PostgresTransactionInfo {
             .collect();
         Self {
             signature: value.signature.clone(),
-            errors,
+            errors: serde_json::to_string(&errors).unwrap_or_default(),
             is_executed: value.is_executed,
             is_confirmed: value.is_confirmed,
             cu_requested: value.cu_requested.map(|x| x as i64),

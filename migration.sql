@@ -2,7 +2,7 @@ CREATE SCHEMA banking_stage_results;
 
 CREATE TABLE banking_stage_results.transaction_infos (
   signature CHAR(88) PRIMARY KEY,
-  errors text [],
+  errors text,
   is_executed BOOL,
   is_confirmed BOOL,
   first_notification_slot BIGINT NOT NULL,
@@ -22,17 +22,9 @@ CREATE TABLE banking_stage_results.blocks (
   processed_transactions BIGINT,
   total_cu_used BIGINT,
   total_cu_requested BIGINT,
-  heavily_writelocked_accounts text []
+  heavily_writelocked_accounts text
+  heavily_readlocked_accounts text
 );
-
-CREATE TABLE banking_stage_results.accounts (
-  account CHAR(44) PRIMARY KEY,
-  account_borrow_outstanding BIGINT,
-  account_in_use_write BIGINT,
-  account_in_use_read BIGINT,
-  would_exceed_maximum_account_cost_limit BIGINT
-);
-
 
 CREATE INDEX idx_blocks_slot ON banking_stage_results.blocks(slot);
 -- optional

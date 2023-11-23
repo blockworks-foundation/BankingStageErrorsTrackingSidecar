@@ -6,6 +6,7 @@ use std::{
 };
 use tokio::time::Instant;
 
+use crate::prometheus_sync::PrometheusSync;
 use block_info::BlockInfo;
 use cli::Args;
 use dashmap::DashMap;
@@ -19,13 +20,12 @@ use yellowstone_grpc_proto::prelude::{
     subscribe_update::UpdateOneof, CommitmentLevel, SubscribeRequestFilterBlocks,
     SubscribeUpdateBlock,
 };
-use crate::prometheus_sync::PrometheusSync;
 
 mod block_info;
 mod cli;
 mod postgres;
-mod transaction_info;
 mod prometheus_sync;
+mod transaction_info;
 
 lazy_static::lazy_static! {
      static ref BLOCK_TXS: IntGauge =
@@ -34,6 +34,10 @@ lazy_static::lazy_static! {
         register_int_gauge!(opts!("bankingstage_banking_errors", "banking_stage errors in block")).unwrap();
     static ref TXERROR_COUNT: IntGauge =
         register_int_gauge!(opts!("bankingstage_txerrors", "transaction errors in block")).unwrap();
+    static ref BANKING_STAGE_ERROR_EVENT_COUNT: IntCounter =
+        register_int_counter!(opts!("bankingstage_banking_stage_events_counter", "Banking stage events received")).unwrap();
+    static ref BANKING_STAGE_BLOCKS_COUNTER: IntCounter =
+        register_int_counter!(opts!("bankingstage_blocks_counter", "Banking stage blocks received")).unwrap();
 }
 
 #[tokio::main()]
@@ -90,7 +94,10 @@ async fn main() {
     tokio::spawn(async move {
         while let Some((wait_until, block)) = recv_block.recv().await {
             if wait_until > Instant::now() + Duration::from_secs(5) {
-                info!("wait until {:?} to collect errors for block {}", wait_until, block.slot);
+                info!(
+                    "wait until {:?} to collect errors for block {}",
+                    wait_until, block.slot
+                );
             }
             tokio::time::sleep_until(wait_until).await;
             for transaction in &block.transactions {
@@ -102,14 +109,18 @@ async fn main() {
                     info.add_transaction(&transaction, block.slot);
                 }
             }
-
-            let block_info = BlockInfo::new(&block, &slot_by_error_task);
-            BANKING_STAGE_ERROR_COUNT.set(block_info.banking_stage_errors);
-            TXERROR_COUNT.set(block_info.processed_transactions - block_info.successful_transactions);
+            let banking_stage_error_count = slot_by_error_task
+                .get(&block.slot)
+                .map(|x| *x.value() as i64);
+            let block_info = BlockInfo::new(&block, banking_stage_error_count);
+            BANKING_STAGE_ERROR_COUNT.add(block_info.banking_stage_errors.unwrap_or(0));
+            TXERROR_COUNT
+                .add(block_info.processed_transactions - block_info.successful_transactions);
             if let Err(e) = postgres.save_block_info(block_info).await {
                 error!("Error saving block {}", e);
             }
-            info!("saved block {}", block.slot);
+            slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
+            slot_by_error_task.remove(&block.slot);
         }
     });
 
@@ -127,7 +138,7 @@ async fn main() {
                 if transaction.error.is_none() {
                     continue;
                 }
-                info!("got banking stage transaction errors");
+                BANKING_STAGE_ERROR_EVENT_COUNT.inc();
                 let sig = transaction.signature.to_string();
                 match slot_by_errors.get_mut(&transaction.slot) {
                     Some(mut value) => {
@@ -151,8 +162,7 @@ async fn main() {
             UpdateOneof::Block(block) => {
                 debug!("got block {}", block.slot);
                 BLOCK_TXS.set(block.transactions.len() as i64);
-                slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
-
+                BANKING_STAGE_BLOCKS_COUNTER.inc();
                 send_block
                     .send((Instant::now() + Duration::from_secs(30), block))
                     .expect("should works");
