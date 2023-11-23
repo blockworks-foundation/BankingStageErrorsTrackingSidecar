@@ -27,7 +27,7 @@ mod prometheus_sync;
 
 lazy_static::lazy_static! {
      static ref BLOCK_TXS: IntGauge =
-        register_int_gauge!(opts!("block_arrived", "block seen with n transactions (use for liveness check)")).unwrap();
+        register_int_gauge!(opts!("block_arrived", "block seen with n transactions")).unwrap();
     static ref BANKING_STAGE_ERROR_COUNT: IntGauge =
         register_int_gauge!(opts!("bankingstage_banking_errors", "banking_stage errors in block")).unwrap();
     static ref TXERROR_COUNT: IntGauge =
