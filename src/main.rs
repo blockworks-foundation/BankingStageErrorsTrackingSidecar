@@ -10,23 +10,37 @@ use cli::Args;
 use dashmap::DashMap;
 use futures::StreamExt;
 use log::info;
+use prometheus::{IntCounter, IntGauge, opts, register_int_counter, register_int_gauge};
 use solana_sdk::signature::Signature;
 use transaction_info::TransactionInfo;
 use yellowstone_grpc_client::GeyserGrpcClient;
 use yellowstone_grpc_proto::prelude::{
     subscribe_update::UpdateOneof, CommitmentLevel, SubscribeRequestFilterBlocks, SubscribeUpdateBlock,
 };
+use crate::prometheus_sync::PrometheusSync;
 
 mod block_info;
 mod cli;
 mod postgres;
 mod transaction_info;
+mod prometheus_sync;
+
+lazy_static::lazy_static! {
+    static ref BANKING_STAGE_ERROR_COUNT: IntGauge =
+        register_int_gauge!(opts!("bankingstage_banking_errors", "banking_stage errors in block")).unwrap();
+    static ref TXERROR_COUNT: IntGauge =
+        register_int_gauge!(opts!("bankingstage_txerrors", "transaction errors in block")).unwrap();
+}
 
 #[tokio::main()]
 async fn main() {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
+
+    let _prometheus_jh = PrometheusSync::sync(args.prometheus_addr.clone());
+
+
     let grpc_addr = args.grpc_address;
     let mut client = GeyserGrpcClient::connect(grpc_addr, None::<&'static str>, None).unwrap();
     let map_of_infos = Arc::new(DashMap::<String, TransactionInfo>::new());
@@ -71,7 +85,9 @@ async fn main() {
     // process blocks with 2 mins delay so that we process all the banking stage errors before processing blocks
     tokio::spawn(async move {
         while let Some((wait_until, block)) = recv_block.recv().await {
-            println!("b");
+            if wait_until > Instant::now() + Duration::from_secs(5) {
+                info!("wait until {:?} to collect errors for block {}", wait_until, block.slot);
+            }
             tokio::time::sleep_until(wait_until).await;
             for transaction in &block.transactions {
                 let Some(tx) = &transaction.transaction else {
@@ -84,9 +100,12 @@ async fn main() {
             }
 
             let block_info = BlockInfo::new(&block, &slot_by_error_task);
+            BANKING_STAGE_ERROR_COUNT.set(block_info.banking_stage_errors);
+            TXERROR_COUNT.set(block_info.processed_transactions - block_info.successful_transactions);
             if let Err(e) = postgres.save_block_info(block_info).await {
                 log::error!("Error saving block {}", e);
             }
+            info!("saved block {}", block.slot);
         }
     });
 
@@ -105,7 +124,7 @@ async fn main() {
                 if transaction.error.is_none() {
                     continue;
                 }
-                log::info!("got banking stage transaction erros");
+                info!("got banking stage transaction errors");
                 let sig = transaction.signature.to_string();
                 match slot_by_errors.get_mut(&transaction.slot) {
                     Some(mut value) => {
@@ -127,7 +146,7 @@ async fn main() {
                 }
             }
             UpdateOneof::Block(block) => {
-                log::info!("got block");
+                log::debug!("got block {}", block.slot);
                 slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
 
                 send_block.send(( Instant::now() + Duration::from_secs(30), block)).expect("should works");
