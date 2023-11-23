@@ -1,9 +1,10 @@
 use clap::Parser;
-use tokio::time::Instant;
 use std::{
     collections::HashMap,
-    sync::{atomic::AtomicU64, Arc}, time::Duration,
+    sync::{atomic::AtomicU64, Arc},
+    time::Duration,
 };
+use tokio::time::Instant;
 
 use block_info::BlockInfo;
 use cli::Args;
@@ -15,7 +16,8 @@ use solana_sdk::signature::Signature;
 use transaction_info::TransactionInfo;
 use yellowstone_grpc_client::GeyserGrpcClient;
 use yellowstone_grpc_proto::prelude::{
-    subscribe_update::UpdateOneof, CommitmentLevel, SubscribeRequestFilterBlocks, SubscribeUpdateBlock,
+    subscribe_update::UpdateOneof, CommitmentLevel, SubscribeRequestFilterBlocks,
+    SubscribeUpdateBlock,
 };
 use crate::prometheus_sync::PrometheusSync;
 
@@ -43,7 +45,7 @@ async fn main() {
     let _prometheus_jh = PrometheusSync::sync(args.prometheus_addr.clone());
 
     let grpc_addr = args.grpc_address;
-    let mut client = GeyserGrpcClient::connect(grpc_addr, None::<&'static str>, None).unwrap();
+    let mut client = GeyserGrpcClient::connect(grpc_addr, args.grpc_x_token, None).unwrap();
     let map_of_infos = Arc::new(DashMap::<String, TransactionInfo>::new());
     let slot_by_errors = Arc::new(DashMap::<u64, u64>::new());
 
@@ -79,7 +81,8 @@ async fn main() {
 
     postgres.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());
 
-    let (send_block, mut recv_block) = tokio::sync::mpsc::unbounded_channel::<(Instant, SubscribeUpdateBlock)>();
+    let (send_block, mut recv_block) =
+        tokio::sync::mpsc::unbounded_channel::<(Instant, SubscribeUpdateBlock)>();
     let slot_by_error_task = slot_by_errors.clone();
     let map_of_infos_task = map_of_infos.clone();
 
@@ -109,7 +112,6 @@ async fn main() {
             info!("saved block {}", block.slot);
         }
     });
-
 
     while let Some(message) = stream.next().await {
         let Ok(message) = message else {
@@ -150,7 +152,10 @@ async fn main() {
                 log::debug!("got block {}", block.slot);
                 BLOCK_TXS.set(block.transactions.len() as i64);
                 slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
-                send_block.send(( Instant::now() + Duration::from_secs(30), block)).expect("should works");
+
+                send_block
+                    .send((Instant::now() + Duration::from_secs(30), block))
+                    .expect("should works");
                 // delay queue so that we get all the banking stage errors before processing block
             }
             _ => {}

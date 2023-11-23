@@ -4,11 +4,14 @@ use std::{
 };
 
 use anyhow::Context;
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use itertools::Itertools;
 use log::debug;
-use tokio_postgres::{tls::MakeTlsConnect, types::ToSql, Client, NoTls, Socket};
+use native_tls::{Certificate, Identity, TlsConnector};
+use postgres_native_tls::MakeTlsConnector;
+use tokio_postgres::{config::SslMode, tls::MakeTlsConnect, types::ToSql, Client, NoTls, Socket};
 
 use crate::{block_info::BlockInfo, transaction_info::TransactionInfo};
 
@@ -21,7 +24,33 @@ impl PostgresSession {
         let pg_config = std::env::var("PG_CONFIG").context("env PG_CONFIG not found")?;
         let pg_config = pg_config.parse::<tokio_postgres::Config>()?;
 
-        let client = Self::spawn_connection(pg_config, NoTls).await?;
+        let client = if let SslMode::Disable = pg_config.get_ssl_mode() {
+            Self::spawn_connection(pg_config, NoTls).await?
+        } else {
+            let ca_pem_b64 = std::env::var("CA_PEM_B64").context("env CA_PEM_B64 not found")?;
+            let client_pks_b64 =
+                std::env::var("CLIENT_PKS_B64").context("env CLIENT_PKS_B64 not found")?;
+            let client_pks_password =
+                std::env::var("CLIENT_PKS_PASS").context("env CLIENT_PKS_PASS not found")?;
+
+            let ca_pem = base64::engine::general_purpose::STANDARD
+                .decode(ca_pem_b64)
+                .context("ca pem decode")?;
+            let client_pks = base64::engine::general_purpose::STANDARD
+                .decode(client_pks_b64)
+                .context("client pks decode")?;
+
+            let connector = TlsConnector::builder()
+                .add_root_certificate(Certificate::from_pem(&ca_pem)?)
+                .identity(
+                    Identity::from_pkcs12(&client_pks, &client_pks_password).context("Identity")?,
+                )
+                .danger_accept_invalid_hostnames(true)
+                .danger_accept_invalid_certs(true)
+                .build()?;
+
+            Self::spawn_connection(pg_config, MakeTlsConnector::new(connector)).await?
+        };
 
         Ok(Self { client })
     }
@@ -93,7 +122,6 @@ impl PostgresSession {
             .collect();
         for tx in txs.iter() {
             args.push(&tx.signature);
-            args.push(&tx.transaction_message);
             args.push(&tx.errors);
             args.push(&tx.is_executed);
             args.push(&tx.is_confirmed);
@@ -108,7 +136,7 @@ impl PostgresSession {
         let mut query = String::from(
             r#"
                 INSERT INTO banking_stage_results.transaction_infos 
-                (signature, message, errors, is_executed, is_confirmed, first_notification_slot, cu_requested, prioritization_fees, utc_timestamp, accounts_used, processed_slot)
+                (signature, errors, is_executed, is_confirmed, first_notification_slot, cu_requested, prioritization_fees, utc_timestamp, accounts_used, processed_slot)
                 VALUES
             "#,
         );
@@ -200,7 +228,6 @@ impl Postgres {
 
 pub struct PostgresTransactionInfo {
     pub signature: String,
-    pub transaction_message: Option<String>,
     pub errors: Vec<String>,
     pub is_executed: bool,
     pub is_confirmed: bool,
@@ -226,10 +253,6 @@ impl From<&TransactionInfo> for PostgresTransactionInfo {
             .collect();
         Self {
             signature: value.signature.clone(),
-            transaction_message: value
-                .transaction_message
-                .as_ref()
-                .map(|x| base64::encode(bincode::serialize(&x).unwrap())),
             errors,
             is_executed: value.is_executed,
             is_confirmed: value.is_confirmed,
