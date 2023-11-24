@@ -115,13 +115,11 @@ impl PostgresSession {
         if txs.is_empty() {
             return Ok(());
         }
-        const NUMBER_OF_ARGS: usize = 11;
+        const NUMBER_OF_ARGS: usize = 10;
 
         let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS * txs.len());
-        let txs: Vec<PostgresTransactionInfo> = txs
-            .iter()
-            .map(|x| PostgresTransactionInfo::from(x))
-            .collect();
+        let txs: Vec<PostgresTransactionInfo> =
+            txs.iter().map(PostgresTransactionInfo::from).collect();
         for tx in txs.iter() {
             args.push(&tx.signature);
             args.push(&tx.errors);
@@ -150,7 +148,7 @@ impl PostgresSession {
     }
 
     pub async fn save_block(&self, block_info: BlockInfo) -> anyhow::Result<()> {
-        const NUMBER_OF_ARGS: usize = 9;
+        const NUMBER_OF_ARGS: usize = 10;
         let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS);
         args.push(&block_info.block_hash);
         args.push(&block_info.slot);
@@ -182,6 +180,7 @@ impl PostgresSession {
     }
 }
 
+#[derive(Clone)]
 pub struct Postgres {
     session: Arc<PostgresSession>,
 }

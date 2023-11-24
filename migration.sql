@@ -22,7 +22,7 @@ CREATE TABLE banking_stage_results.blocks (
   processed_transactions BIGINT,
   total_cu_used BIGINT,
   total_cu_requested BIGINT,
-  heavily_writelocked_accounts text
+  heavily_writelocked_accounts text,
   heavily_readlocked_accounts text
 );
 

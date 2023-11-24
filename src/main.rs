@@ -1,4 +1,5 @@
 use clap::Parser;
+use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use std::{
     collections::HashMap,
     sync::{atomic::AtomicU64, Arc},
@@ -11,9 +12,9 @@ use block_info::BlockInfo;
 use cli::Args;
 use dashmap::DashMap;
 use futures::StreamExt;
-use log::{debug, error, info};
-use prometheus::{IntCounter, IntGauge, opts, register_int_counter, register_int_gauge};
-use solana_sdk::signature::Signature;
+use log::{debug, error};
+use prometheus::{opts, register_int_counter, register_int_gauge, IntCounter, IntGauge};
+use solana_sdk::{commitment_config::CommitmentConfig, signature::Signature};
 use transaction_info::TransactionInfo;
 use yellowstone_grpc_client::GeyserGrpcClient;
 use yellowstone_grpc_proto::prelude::{
@@ -45,6 +46,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
+    let rpc_url = args.rpc_url;
 
     let _prometheus_jh = PrometheusSync::sync(args.prometheus_addr.clone());
 
@@ -86,43 +88,106 @@ async fn main() {
     postgres.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());
 
     let (send_block, mut recv_block) =
-        tokio::sync::mpsc::unbounded_channel::<(Instant, SubscribeUpdateBlock)>();
+        tokio::sync::mpsc::unbounded_channel::<SubscribeUpdateBlock>();
     let slot_by_error_task = slot_by_errors.clone();
     let map_of_infos_task = map_of_infos.clone();
 
     // process blocks with 2 mins delay so that we process all the banking stage errors before processing blocks
-    tokio::spawn(async move {
-        while let Some((wait_until, block)) = recv_block.recv().await {
-            if wait_until > Instant::now() + Duration::from_secs(5) {
-                info!(
-                    "wait until {:?} to collect errors for block {}",
-                    wait_until, block.slot
-                );
+    let jh = {
+        let postgres = postgres.clone();
+        tokio::spawn(async move {
+            while let Some(block) = recv_block.recv().await {
+                for transaction in &block.transactions {
+                    let Some(tx) = &transaction.transaction else {
+                        continue;
+                    };
+                    let signature = Signature::try_from(tx.signatures[0].clone()).unwrap();
+                    if let Some(mut info) = map_of_infos_task.get_mut(&signature.to_string()) {
+                        info.add_transaction(transaction, block.slot);
+                    }
+                }
+
+                let block_info = BlockInfo::new(&block);
+
+                TXERROR_COUNT
+                    .add(block_info.processed_transactions - block_info.successful_transactions);
+                if let Err(e) = postgres.save_block_info(block_info).await {
+                    error!("Error saving block {}", e);
+                }
+                slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
+                slot_by_error_task.remove(&block.slot);
             }
-            tokio::time::sleep_until(wait_until).await;
-            for transaction in &block.transactions {
-                let Some(tx) = &transaction.transaction else {
+        })
+    };
+
+    // get blocks from rpc server
+    // because validator does not send banking blocks
+    let (rpc_blocks_sender, rpc_blocks_reciever) =
+        tokio::sync::mpsc::unbounded_channel::<(Instant, u64)>();
+    let jh2 = {
+        let map_of_infos = map_of_infos.clone();
+        let postgres = postgres.clone();
+        let slot_by_errors = slot_by_errors.clone();
+        tokio::spawn(async move {
+            let mut rpc_blocks_reciever = rpc_blocks_reciever;
+            let rpc_client = RpcClient::new(rpc_url);
+            while let Some((wait_until, slot)) = rpc_blocks_reciever.recv().await {
+                tokio::time::sleep_until(wait_until).await;
+                let block = if let Ok(block) = rpc_client
+                    .get_block_with_config(
+                        slot,
+                        solana_rpc_client_api::config::RpcBlockConfig {
+                            encoding: Some(
+                                solana_transaction_status::UiTransactionEncoding::Base64,
+                            ),
+                            transaction_details: Some(
+                                solana_transaction_status::TransactionDetails::Full,
+                            ),
+                            rewards: Some(true),
+                            commitment: Some(CommitmentConfig::confirmed()),
+                            max_supported_transaction_version: Some(0),
+                        },
+                    )
+                    .await
+                {
+                    block
+                } else {
                     continue;
                 };
-                let signature = Signature::try_from(tx.signatures[0].clone()).unwrap();
-                if let Some(mut info) = map_of_infos_task.get_mut(&signature.to_string()) {
-                    info.add_transaction(&transaction, block.slot);
+
+                let Some(transactions) = &block.transactions else {
+                    continue;
+                };
+
+                for transaction in transactions {
+                    let Some(transaction) = &transaction.transaction.decode() else {
+                        continue;
+                    };
+                    let signature = transaction.signatures[0].to_string();
+                    if let Some(mut info) = map_of_infos.get_mut(&signature) {
+                        info.add_rpc_transaction(slot, transaction);
+                    }
+                }
+
+                let banking_stage_error_count = slot_by_errors
+                    .get(&slot)
+                    .map(|x| *x.value() as i64)
+                    .unwrap_or_default();
+                let block_info =
+                    BlockInfo::new_from_rpc_block(slot, &block, banking_stage_error_count);
+                if let Some(block_info) = block_info {
+                    BANKING_STAGE_ERROR_COUNT.add(banking_stage_error_count);
+                    TXERROR_COUNT.add(
+                        block_info.processed_transactions - block_info.successful_transactions,
+                    );
+                    if let Err(e) = postgres.save_block_info(block_info).await {
+                        error!("Error saving block {}", e);
+                    }
+                    slot_by_errors.remove(&slot);
                 }
             }
-            let banking_stage_error_count = slot_by_error_task
-                .get(&block.slot)
-                .map(|x| *x.value() as i64);
-            let block_info = BlockInfo::new(&block, banking_stage_error_count);
-            BANKING_STAGE_ERROR_COUNT.add(block_info.banking_stage_errors.unwrap_or(0));
-            TXERROR_COUNT
-                .add(block_info.processed_transactions - block_info.successful_transactions);
-            if let Err(e) = postgres.save_block_info(block_info).await {
-                error!("Error saving block {}", e);
-            }
-            slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
-            slot_by_error_task.remove(&block.slot);
-        }
-    });
+        })
+    };
 
     while let Some(message) = geyser_stream.next().await {
         let Ok(message) = message else {
@@ -142,10 +207,13 @@ async fn main() {
                 let sig = transaction.signature.to_string();
                 match slot_by_errors.get_mut(&transaction.slot) {
                     Some(mut value) => {
-                        *value = *value + 1;
+                        *value += 1;
                     }
                     None => {
                         slot_by_errors.insert(transaction.slot, 1);
+                        rpc_blocks_sender
+                            .send((Instant::now() + Duration::from_secs(30), transaction.slot))
+                            .expect("should works");
                     }
                 }
                 match map_of_infos.get_mut(&sig) {
@@ -163,12 +231,12 @@ async fn main() {
                 debug!("got block {}", block.slot);
                 BLOCK_TXS.set(block.transactions.len() as i64);
                 BANKING_STAGE_BLOCKS_COUNTER.inc();
-                send_block
-                    .send((Instant::now() + Duration::from_secs(30), block))
-                    .expect("should works");
+                send_block.send(block).expect("should works");
                 // delay queue so that we get all the banking stage errors before processing block
             }
             _ => {}
         };
     }
+    jh.await.unwrap();
+    jh2.await.unwrap();
 }
