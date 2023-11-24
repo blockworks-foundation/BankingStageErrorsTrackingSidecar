@@ -1,6 +1,7 @@
-use std::{collections::HashMap, hash::Hash, str::FromStr};
+use std::{collections::HashMap, hash::Hash};
 
 use chrono::{DateTime, Utc};
+use itertools::Itertools;
 use solana_sdk::{
     borsh0_10::try_from_slice_unchecked,
     compute_budget::{self, ComputeBudgetInstruction},
@@ -11,7 +12,7 @@ use solana_sdk::{
     },
     pubkey::Pubkey,
     slot_history::Slot,
-    transaction::TransactionError,
+    transaction::{TransactionError, VersionedTransaction},
 };
 use yellowstone_grpc_proto::prelude::{
     SubscribeUpdateBankingTransactionResults, SubscribeUpdateTransactionInfo,
@@ -83,7 +84,6 @@ impl Eq for ErrorKey {}
 #[derive(Clone)]
 pub struct TransactionInfo {
     pub signature: String,
-    pub transaction_message: Option<VersionedMessage>,
     pub errors: HashMap<ErrorKey, usize>,
     pub is_executed: bool,
     pub is_confirmed: bool,
@@ -91,7 +91,7 @@ pub struct TransactionInfo {
     pub cu_requested: Option<u64>,
     pub prioritization_fees: Option<u64>,
     pub utc_timestamp: DateTime<Utc>,
-    pub account_used: HashMap<Pubkey, char>,
+    pub account_used: Vec<(String, bool)>,
     pub processed_slot: Option<Slot>,
 }
 
@@ -117,16 +117,10 @@ impl TransactionInfo {
         let account_used = notification
             .accounts
             .iter()
-            .map(|x| {
-                (
-                    Pubkey::from_str(&x.account).unwrap(),
-                    if x.is_writable { 'w' } else { 'r' },
-                )
-            })
-            .collect();
+            .map(|x| (x.account.clone(), x.is_writable))
+            .collect_vec();
         Self {
             signature: notification.signature.clone(),
-            transaction_message: None,
             errors,
             is_executed,
             is_confirmed: false,
@@ -147,7 +141,7 @@ impl TransactionInfo {
                 let key = ErrorKey { error, slot };
                 match self.errors.get_mut(&key) {
                     Some(x) => {
-                        *x = *x + 1;
+                        *x += 1;
                     }
                     None => {
                         self.errors.insert(key, 1);
@@ -156,6 +150,77 @@ impl TransactionInfo {
             }
             None => {}
         }
+    }
+
+    pub fn add_rpc_transaction(&mut self, slot: u64, transaction: &VersionedTransaction) {
+        let message = &transaction.message;
+        let legacy_compute_budget: Option<(u32, Option<u64>)> =
+            message.instructions().iter().find_map(|i| {
+                if i.program_id(message.static_account_keys())
+                    .eq(&compute_budget::id())
+                {
+                    if let Ok(ComputeBudgetInstruction::RequestUnitsDeprecated {
+                        units,
+                        additional_fee,
+                    }) = try_from_slice_unchecked(i.data.as_slice())
+                    {
+                        if additional_fee > 0 {
+                            return Some((units, Some(((units * 1000) / additional_fee) as u64)));
+                        } else {
+                            return Some((units, None));
+                        }
+                    }
+                }
+                None
+            });
+
+        let legacy_cu_requested = legacy_compute_budget.map(|x| x.0);
+        let legacy_prioritization_fees = legacy_compute_budget.map(|x| x.1).unwrap_or(None);
+
+        let cu_requested = message
+            .instructions()
+            .iter()
+            .find_map(|i| {
+                if i.program_id(message.static_account_keys())
+                    .eq(&compute_budget::id())
+                {
+                    if let Ok(ComputeBudgetInstruction::SetComputeUnitLimit(limit)) =
+                        try_from_slice_unchecked(i.data.as_slice())
+                    {
+                        return Some(limit);
+                    }
+                }
+                None
+            })
+            .or(legacy_cu_requested);
+
+        let prioritization_fees = message
+            .instructions()
+            .iter()
+            .find_map(|i| {
+                if i.program_id(message.static_account_keys())
+                    .eq(&compute_budget::id())
+                {
+                    if let Ok(ComputeBudgetInstruction::SetComputeUnitPrice(price)) =
+                        try_from_slice_unchecked(i.data.as_slice())
+                    {
+                        return Some(price);
+                    }
+                }
+
+                None
+            })
+            .or(legacy_prioritization_fees);
+        if let Some(cu_requested) = cu_requested {
+            self.cu_requested = Some(cu_requested as u64);
+        }
+
+        if let Some(prioritization_fees) = prioritization_fees {
+            self.prioritization_fees = Some(prioritization_fees);
+        }
+        self.is_confirmed = true;
+        self.is_executed = true;
+        self.processed_slot = Some(slot);
     }
 
     pub fn add_transaction(&mut self, transaction: &SubscribeUpdateTransactionInfo, slot: Slot) {
@@ -280,7 +345,6 @@ impl TransactionInfo {
             self.prioritization_fees = Some(prioritization_fees);
         }
         self.is_confirmed = true;
-        self.transaction_message = Some(message);
         self.is_executed = true;
         self.processed_slot = Some(slot);
     }

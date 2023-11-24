@@ -2,11 +2,11 @@ use std::time::Duration;
 
 use log::error;
 use prometheus::{Encoder, TextEncoder};
+use tokio::task::JoinHandle;
 use tokio::{
     io::AsyncWriteExt,
     net::{TcpListener, TcpStream, ToSocketAddrs},
 };
-use tokio::task::JoinHandle;
 
 pub struct PrometheusSync;
 

@@ -11,6 +11,8 @@ use itertools::Itertools;
 use log::{debug, error, info};
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
+use serde::Serialize;
+use solana_sdk::transaction::TransactionError;
 use tokio_postgres::{config::SslMode, tls::MakeTlsConnect, types::ToSql, Client, NoTls, Socket};
 
 use crate::{block_info::BlockInfo, transaction_info::TransactionInfo};
@@ -113,13 +115,11 @@ impl PostgresSession {
         if txs.is_empty() {
             return Ok(());
         }
-        const NUMBER_OF_ARGS: usize = 11;
+        const NUMBER_OF_ARGS: usize = 10;
 
         let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS * txs.len());
-        let txs: Vec<PostgresTransactionInfo> = txs
-            .iter()
-            .map(|x| PostgresTransactionInfo::from(x))
-            .collect();
+        let txs: Vec<PostgresTransactionInfo> =
+            txs.iter().map(PostgresTransactionInfo::from).collect();
         for tx in txs.iter() {
             args.push(&tx.signature);
             args.push(&tx.errors);
@@ -148,7 +148,7 @@ impl PostgresSession {
     }
 
     pub async fn save_block(&self, block_info: BlockInfo) -> anyhow::Result<()> {
-        const NUMBER_OF_ARGS: usize = 9;
+        const NUMBER_OF_ARGS: usize = 10;
         let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS);
         args.push(&block_info.block_hash);
         args.push(&block_info.slot);
@@ -158,12 +158,17 @@ impl PostgresSession {
         args.push(&block_info.processed_transactions);
         args.push(&block_info.total_cu_used);
         args.push(&block_info.total_cu_requested);
-        args.push(&block_info.heavily_writelocked_accounts);
+        let heavily_writelocked_accounts =
+            serde_json::to_string(&block_info.heavily_writelocked_accounts).unwrap_or_default();
+        let heavily_readlocked_accounts =
+            serde_json::to_string(&block_info.heavily_readlocked_accounts).unwrap_or_default();
+        args.push(&heavily_writelocked_accounts);
+        args.push(&heavily_readlocked_accounts);
 
         let mut query = String::from(
             r#"
                 INSERT INTO banking_stage_results.blocks 
-                (block_hash, slot, leader_identity, successful_transactions, banking_stage_errors, processed_transactions, total_cu_used, total_cu_requested, heavily_writelocked_accounts)
+                (block_hash, slot, leader_identity, successful_transactions, banking_stage_errors, processed_transactions, total_cu_used, total_cu_requested, heavily_writelocked_accounts, heavily_readlocked_accounts)
                 VALUES
             "#,
         );
@@ -175,6 +180,7 @@ impl PostgresSession {
     }
 }
 
+#[derive(Clone)]
 pub struct Postgres {
     session: Arc<PostgresSession>,
 }
@@ -190,13 +196,13 @@ impl Postgres {
     pub fn spawn_transaction_infos_saver(
         &self,
         map_of_transaction: Arc<DashMap<String, TransactionInfo>>,
-        slots: Arc<AtomicU64>,
+        slot: Arc<AtomicU64>,
     ) {
         let session = self.session.clone();
         tokio::task::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(60)).await;
-                let slot = slots.load(std::sync::atomic::Ordering::Relaxed);
+                let slot = slot.load(std::sync::atomic::Ordering::Relaxed);
                 let mut txs_to_store = vec![];
                 for tx in map_of_transaction.iter() {
                     if slot > tx.first_notification_slot + 300 {
@@ -228,15 +234,28 @@ impl Postgres {
 
 pub struct PostgresTransactionInfo {
     pub signature: String,
-    pub errors: Vec<String>,
+    pub errors: String,
     pub is_executed: bool,
     pub is_confirmed: bool,
     pub first_notification_slot: i64,
     pub cu_requested: Option<i64>,
     pub prioritization_fees: Option<i64>,
     pub utc_timestamp: DateTime<Utc>,
-    pub accounts_used: Vec<String>,
+    pub accounts_used: String,
     pub processed_slot: Option<i64>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct TransactionErrorData {
+    error: TransactionError,
+    slot: u64,
+    count: usize,
+}
+
+#[derive(Serialize, Clone)]
+pub struct AccountUsed {
+    key: String,
+    writable: bool,
 }
 
 impl From<&TransactionInfo> for PostgresTransactionInfo {
@@ -244,23 +263,30 @@ impl From<&TransactionInfo> for PostgresTransactionInfo {
         let errors = value
             .errors
             .iter()
-            .map(|(key, size)| format!("key:{}, slot:{}, count:{}", key.error, key.slot, size))
+            .map(|(key, count)| TransactionErrorData {
+                error: key.error.clone(),
+                slot: key.slot,
+                count: *count,
+            })
             .collect_vec();
         let accounts_used = value
             .account_used
             .iter()
-            .map(|x| format!("{}({})", x.0, x.1))
-            .collect();
+            .map(|(key, writable)| AccountUsed {
+                key: key.to_string(),
+                writable: *writable,
+            })
+            .collect_vec();
         Self {
             signature: value.signature.clone(),
-            errors,
+            errors: serde_json::to_string(&errors).unwrap_or_default(),
             is_executed: value.is_executed,
             is_confirmed: value.is_confirmed,
             cu_requested: value.cu_requested.map(|x| x as i64),
             first_notification_slot: value.first_notification_slot as i64,
             prioritization_fees: value.prioritization_fees.map(|x| x as i64),
             utc_timestamp: value.utc_timestamp,
-            accounts_used,
+            accounts_used: serde_json::to_string(&accounts_used).unwrap_or_default(),
             processed_slot: value.processed_slot.map(|x| x as i64),
         }
     }
