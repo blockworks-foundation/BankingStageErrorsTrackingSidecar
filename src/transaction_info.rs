@@ -1,6 +1,7 @@
-use std::{collections::HashMap, hash::Hash, str::FromStr};
+use std::{collections::HashMap, hash::Hash};
 
 use chrono::{DateTime, Utc};
+use itertools::Itertools;
 use solana_sdk::{
     borsh0_10::try_from_slice_unchecked,
     compute_budget::{self, ComputeBudgetInstruction},
@@ -90,7 +91,7 @@ pub struct TransactionInfo {
     pub cu_requested: Option<u64>,
     pub prioritization_fees: Option<u64>,
     pub utc_timestamp: DateTime<Utc>,
-    pub account_used: HashMap<Pubkey, char>,
+    pub account_used: Vec<(String, bool)>,
     pub processed_slot: Option<Slot>,
 }
 
@@ -116,13 +117,8 @@ impl TransactionInfo {
         let account_used = notification
             .accounts
             .iter()
-            .map(|x| {
-                (
-                    Pubkey::from_str(&x.account).unwrap(),
-                    if x.is_writable { 'w' } else { 'r' },
-                )
-            })
-            .collect();
+            .map(|x| (x.account.clone(), x.is_writable))
+            .collect_vec();
         Self {
             signature: notification.signature.clone(),
             errors,

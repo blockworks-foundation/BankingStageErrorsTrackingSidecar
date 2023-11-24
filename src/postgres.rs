@@ -241,7 +241,7 @@ pub struct PostgresTransactionInfo {
     pub cu_requested: Option<i64>,
     pub prioritization_fees: Option<i64>,
     pub utc_timestamp: DateTime<Utc>,
-    pub accounts_used: Vec<String>,
+    pub accounts_used: String,
     pub processed_slot: Option<i64>,
 }
 
@@ -250,6 +250,12 @@ pub struct TransactionErrorData {
     error: TransactionError,
     slot: u64,
     count: usize,
+}
+
+#[derive(Serialize, Clone)]
+pub struct AccountUsed {
+    key: String,
+    writable: bool,
 }
 
 impl From<&TransactionInfo> for PostgresTransactionInfo {
@@ -266,8 +272,11 @@ impl From<&TransactionInfo> for PostgresTransactionInfo {
         let accounts_used = value
             .account_used
             .iter()
-            .map(|x| format!("{}({})", x.0, x.1))
-            .collect();
+            .map(|(key, writable)| AccountUsed {
+                key: key.to_string(),
+                writable: *writable,
+            })
+            .collect_vec();
         Self {
             signature: value.signature.clone(),
             errors: serde_json::to_string(&errors).unwrap_or_default(),
@@ -277,7 +286,7 @@ impl From<&TransactionInfo> for PostgresTransactionInfo {
             first_notification_slot: value.first_notification_slot as i64,
             prioritization_fees: value.prioritization_fees.map(|x| x as i64),
             utc_timestamp: value.utc_timestamp,
-            accounts_used,
+            accounts_used: serde_json::to_string(&accounts_used).unwrap_or_default(),
             processed_slot: value.processed_slot.map(|x| x as i64),
         }
     }
