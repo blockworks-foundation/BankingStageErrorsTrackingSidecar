@@ -110,7 +110,7 @@ async fn main() {
                 let block_info = BlockInfo::new(&block);
 
                 TXERROR_COUNT
-                    .add(block_info.processed_transactions - block_info.successful_transactions);
+                    .set(block_info.processed_transactions - block_info.successful_transactions);
                 if let Err(e) = postgres.save_block_info(block_info).await {
                     error!("Error saving block {}", e);
                 }
@@ -177,7 +177,7 @@ async fn main() {
                     BlockInfo::new_from_rpc_block(slot, &block, banking_stage_error_count);
                 if let Some(block_info) = block_info {
                     BANKING_STAGE_ERROR_COUNT.add(banking_stage_error_count);
-                    TXERROR_COUNT.add(
+                    TXERROR_COUNT.set(
                         block_info.processed_transactions - block_info.successful_transactions,
                     );
                     if let Err(e) = postgres.save_block_info(block_info).await {
