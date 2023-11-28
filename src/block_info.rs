@@ -20,6 +20,32 @@ pub struct AccountUsage {
     pub key: String,
     pub cu_requested: u64,
     pub cu_consumed: u64,
+    pub max_pf: u64,
+    pub min_pf: u64,
+    pub median_pf: u64,
+}
+
+pub struct AccountData {
+    pub key: String,
+    pub cu_requested: u64,
+    pub cu_consumed: u64,
+    pub vec_pf: Vec<u64>,
+}
+
+impl From<&AccountData> for AccountUsage {
+    fn from(value: &AccountData) -> Self {
+        let mut median = value.vec_pf.clone();
+        median.sort();
+        let mid = median.len() / 2;
+        AccountUsage {
+            key: value.key.clone(),
+            cu_requested: value.cu_requested,
+            cu_consumed: value.cu_consumed,
+            max_pf: value.vec_pf.iter().max().cloned().unwrap_or_default(),
+            min_pf: value.vec_pf.iter().min().cloned().unwrap_or_default(),
+            median_pf: median[mid],
+        }
+    }
 }
 
 pub struct BlockInfo {
@@ -67,8 +93,8 @@ impl BlockInfo {
                     .unwrap_or(0)
             })
             .sum::<u64>() as i64;
-        let mut writelocked_accounts: HashMap<Pubkey, AccountUsage> = HashMap::new();
-        let mut readlocked_accounts: HashMap<Pubkey, AccountUsage> = HashMap::new();
+        let mut writelocked_accounts: HashMap<Pubkey, AccountData> = HashMap::new();
+        let mut readlocked_accounts: HashMap<Pubkey, AccountData> = HashMap::new();
         let mut total_cu_requested: u64 = 0;
         for transaction in &block.transactions {
             let Some(tx) = &transaction.transaction else {
@@ -177,6 +203,24 @@ impl BlockInfo {
                     None
                 })
                 .or(legacy_cu_requested);
+
+            let prioritization_fees = message
+                .instructions()
+                .iter()
+                .find_map(|i| {
+                    if i.program_id(message.static_account_keys())
+                        .eq(&compute_budget::id())
+                    {
+                        if let Ok(ComputeBudgetInstruction::SetComputeUnitPrice(price)) =
+                            try_from_slice_unchecked(i.data.as_slice())
+                        {
+                            return Some(price);
+                        }
+                    }
+                    None
+                })
+                .unwrap_or_default();
+
             let cu_requested = cu_requested.unwrap_or(200000) as u64;
             let cu_consumed = meta.compute_units_consumed.unwrap_or(0);
             total_cu_requested += cu_requested;
@@ -192,14 +236,18 @@ impl BlockInfo {
                     Some(x) => {
                         x.cu_requested += cu_requested;
                         x.cu_consumed += cu_consumed;
+                        if prioritization_fees > 0 {
+                            x.vec_pf.push(prioritization_fees);
+                        }
                     }
                     None => {
                         writelocked_accounts.insert(
                             writable_account,
-                            AccountUsage {
+                            AccountData {
                                 key: writable_account.to_string(),
                                 cu_consumed,
                                 cu_requested,
+                                vec_pf: vec![prioritization_fees],
                             },
                         );
                     }
@@ -211,14 +259,18 @@ impl BlockInfo {
                     Some(x) => {
                         x.cu_requested += cu_requested;
                         x.cu_consumed += cu_consumed;
+                        if prioritization_fees > 0 {
+                            x.vec_pf.push(prioritization_fees);
+                        }
                     }
                     None => {
                         readlocked_accounts.insert(
                             readable_account,
-                            AccountUsage {
+                            AccountData {
                                 key: readable_account.to_string(),
                                 cu_consumed,
                                 cu_requested,
+                                vec_pf: vec![prioritization_fees],
                             },
                         );
                     }
@@ -229,16 +281,17 @@ impl BlockInfo {
         let mut heavily_writelocked_accounts = writelocked_accounts
             .iter()
             .filter(|(_, account)| account.cu_consumed > 1000000)
-            .map(|x| x.1.clone())
+            .map(|(_, data)| AccountUsage::from(data))
             .collect_vec();
         heavily_writelocked_accounts.sort_by(|lhs, rhs| rhs.cu_consumed.cmp(&lhs.cu_consumed));
 
         let mut heavily_readlocked_accounts: Vec<_> = readlocked_accounts
             .iter()
             .filter(|(_, acc)| acc.cu_consumed > 1000000)
-            .map(|x| x.1.clone())
+            .map(|(_, data)| AccountUsage::from(data))
             .collect();
         heavily_readlocked_accounts.sort_by(|lhs, rhs| rhs.cu_consumed.cmp(&lhs.cu_consumed));
+
         BlockInfo {
             block_hash,
             slot: slot as i64,
@@ -296,8 +349,8 @@ impl BlockInfo {
                     .unwrap_or(0)
             })
             .sum::<u64>() as i64;
-        let mut writelocked_accounts: HashMap<Pubkey, AccountUsage> = HashMap::new();
-        let mut readlocked_accounts: HashMap<Pubkey, AccountUsage> = HashMap::new();
+        let mut writelocked_accounts: HashMap<Pubkey, AccountData> = HashMap::new();
+        let mut readlocked_accounts: HashMap<Pubkey, AccountData> = HashMap::new();
         let mut total_cu_requested: u64 = 0;
         for transaction in transactions {
             let Some(tx) = transaction.transaction.decode() else {
@@ -363,6 +416,23 @@ impl BlockInfo {
             };
             total_cu_requested += cu_requested;
 
+            let prioritization_fees = message
+                .instructions()
+                .iter()
+                .find_map(|i| {
+                    if i.program_id(message.static_account_keys())
+                        .eq(&compute_budget::id())
+                    {
+                        if let Ok(ComputeBudgetInstruction::SetComputeUnitPrice(price)) =
+                            try_from_slice_unchecked(i.data.as_slice())
+                        {
+                            return Some(price);
+                        }
+                    }
+                    None
+                })
+                .unwrap_or_default();
+
             let accounts = message
                 .static_account_keys()
                 .iter()
@@ -374,14 +444,18 @@ impl BlockInfo {
                     Some(x) => {
                         x.cu_requested += cu_requested;
                         x.cu_consumed += cu_consumed;
+                        if prioritization_fees > 0 {
+                            x.vec_pf.push(prioritization_fees)
+                        }
                     }
                     None => {
                         writelocked_accounts.insert(
                             writable_account,
-                            AccountUsage {
+                            AccountData {
                                 key: writable_account.to_string(),
                                 cu_consumed,
                                 cu_requested,
+                                vec_pf: vec![prioritization_fees],
                             },
                         );
                     }
@@ -393,14 +467,18 @@ impl BlockInfo {
                     Some(x) => {
                         x.cu_requested += cu_requested;
                         x.cu_consumed += cu_consumed;
+                        if prioritization_fees > 0 {
+                            x.vec_pf.push(prioritization_fees)
+                        }
                     }
                     None => {
                         readlocked_accounts.insert(
                             readable_account,
-                            AccountUsage {
+                            AccountData {
                                 key: readable_account.to_string(),
                                 cu_consumed,
                                 cu_requested,
+                                vec_pf: vec![prioritization_fees],
                             },
                         );
                     }
@@ -411,14 +489,14 @@ impl BlockInfo {
         let mut heavily_writelocked_accounts = writelocked_accounts
             .iter()
             .filter(|(_, account)| account.cu_consumed > 1000000)
-            .map(|x| x.1.clone())
+            .map(|(_, data)| AccountUsage::from(data))
             .collect_vec();
         heavily_writelocked_accounts.sort_by(|lhs, rhs| rhs.cu_consumed.cmp(&lhs.cu_consumed));
 
         let mut heavily_readlocked_accounts: Vec<_> = readlocked_accounts
             .iter()
             .filter(|(_, acc)| acc.cu_consumed > 1000000)
-            .map(|x| x.1.clone())
+            .map(|(_, data)| AccountUsage::from(data))
             .collect();
         heavily_readlocked_accounts.sort_by(|lhs, rhs| rhs.cu_consumed.cmp(&lhs.cu_consumed));
         Some(BlockInfo {

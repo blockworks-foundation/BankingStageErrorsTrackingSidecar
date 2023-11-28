@@ -18,7 +18,7 @@ use solana_sdk::{commitment_config::CommitmentConfig, signature::Signature};
 use transaction_info::TransactionInfo;
 use yellowstone_grpc_client::GeyserGrpcClient;
 use yellowstone_grpc_proto::prelude::{
-    subscribe_update::UpdateOneof, CommitmentLevel, SubscribeRequestFilterBlocks
+    subscribe_update::UpdateOneof, CommitmentLevel, SubscribeRequestFilterBlocks,
 };
 
 mod block_info;
@@ -217,11 +217,12 @@ async fn main() {
                             info.add_transaction(transaction, block.slot);
                         }
                     }
-    
+
                     let block_info = BlockInfo::new(&block);
-    
-                    TXERROR_COUNT
-                        .add(block_info.processed_transactions - block_info.successful_transactions);
+
+                    TXERROR_COUNT.add(
+                        block_info.processed_transactions - block_info.successful_transactions,
+                    );
                     if let Err(e) = postgres.save_block_info(block_info).await {
                         error!("Error saving block {}", e);
                     }
