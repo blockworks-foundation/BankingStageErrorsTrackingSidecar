@@ -37,3 +37,6 @@ CREATE INDEX idx_transaction_infos_timestamp ON banking_stage_results.transactio
 CLUSTER banking_stage_results.transaction_infos using idx_transaction_infos_timestamp;
 VACUUM FULL banking_stage_results.transaction_infos;
 
+ALTER TABLE banking_stage_results.transaction_infos ADD supp_infos text;
+
+ALTER TABLE banking_stage_results.blocks ADD supp_infos text;

@@ -148,7 +148,7 @@ impl PostgresSession {
     }
 
     pub async fn save_block(&self, block_info: BlockInfo) -> anyhow::Result<()> {
-        const NUMBER_OF_ARGS: usize = 10;
+        const NUMBER_OF_ARGS: usize = 11;
         let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS);
         args.push(&block_info.block_hash);
         args.push(&block_info.slot);
@@ -165,10 +165,13 @@ impl PostgresSession {
         args.push(&heavily_writelocked_accounts);
         args.push(&heavily_readlocked_accounts);
 
+        let supp_infos = serde_json::to_string(&block_info.sup_info).unwrap_or_default();
+        args.push(&supp_infos);
+
         let mut query = String::from(
             r#"
                 INSERT INTO banking_stage_results.blocks 
-                (block_hash, slot, leader_identity, successful_transactions, banking_stage_errors, processed_transactions, total_cu_used, total_cu_requested, heavily_writelocked_accounts, heavily_readlocked_accounts)
+                (block_hash, slot, leader_identity, successful_transactions, banking_stage_errors, processed_transactions, total_cu_used, total_cu_requested, heavily_writelocked_accounts, heavily_readlocked_accounts, supp_infos)
                 VALUES
             "#,
         );
