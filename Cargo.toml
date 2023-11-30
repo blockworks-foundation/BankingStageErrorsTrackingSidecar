@@ -37,6 +37,10 @@ tokio = { version = "1.32.0", features = ["rt-multi-thread", "macros", "time"] }
 yellowstone-grpc-client = {git = "https://github.com/blockworks-foundation/yellowstone-grpc.git", branch = "tag-v1.16-mango"}
 yellowstone-grpc-proto = {git = "https://github.com/blockworks-foundation/yellowstone-grpc.git", branch = "tag-v1.16-mango"}
 
+yellowstone-grpc-client_original = { package = "yellowstone-grpc-client", version = "1.12.0+solana.1.16.17" }
+yellowstone-grpc-proto_original = { package = "yellowstone-grpc-proto", version = "1.11.0+solana.1.16.17" }
+
+
 [patch.crates-io]
 solana-account-decoder = { git = "https://github.com/rpcpool/solana-public.git", tag = "v1.16.17-geyser-block-v3-mango" }
 solana-geyser-plugin-interface = { git = "https://github.com/rpcpool/solana-public.git", tag = "v1.16.17-geyser-block-v3-mango" }

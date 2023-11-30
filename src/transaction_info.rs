@@ -14,9 +14,7 @@ use solana_sdk::{
     slot_history::Slot,
     transaction::{TransactionError, VersionedTransaction},
 };
-use yellowstone_grpc_proto::prelude::{
-    SubscribeUpdateBankingTransactionResults, SubscribeUpdateTransactionInfo,
-};
+use yellowstone_grpc_proto::prelude::SubscribeUpdateBankingTransactionResults;
 
 fn convert_transaction_error_into_int(error: &TransactionError) -> u8 {
     match error {
@@ -223,7 +221,7 @@ impl TransactionInfo {
         self.processed_slot = Some(slot);
     }
 
-    pub fn add_transaction(&mut self, transaction: &SubscribeUpdateTransactionInfo, slot: Slot) {
+    pub fn add_transaction(&mut self, transaction: &yellowstone_grpc_proto_original::prelude::SubscribeUpdateTransactionInfo, slot: Slot) {
         let Some(transaction) = &transaction.transaction else {
             return;
         };

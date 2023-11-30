@@ -10,12 +10,13 @@ CREATE TABLE banking_stage_results.transaction_infos (
   prioritization_fees BIGINT,
   utc_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
   accounts_used text,
-  processed_slot BIGINT
+  processed_slot BIGINT,
+  supp_infos text
 );
 
 CREATE TABLE banking_stage_results.blocks (
-  block_hash CHAR(44) PRIMARY KEY,
-  slot BIGINT,
+  block_hash CHAR(44),
+  slot BIGINT PRIMARY KEY,
   leader_identity CHAR(44),
   successful_transactions BIGINT,
   banking_stage_errors BIGINT,
@@ -23,7 +24,8 @@ CREATE TABLE banking_stage_results.blocks (
   total_cu_used BIGINT,
   total_cu_requested BIGINT,
   heavily_writelocked_accounts text,
-  heavily_readlocked_accounts text
+  heavily_readlocked_accounts text,
+  supp_infos text
 );
 
 CREATE INDEX idx_blocks_slot ON banking_stage_results.blocks(slot);
@@ -36,7 +38,3 @@ CREATE INDEX idx_transaction_infos_timestamp ON banking_stage_results.transactio
 -- optional
 CLUSTER banking_stage_results.transaction_infos using idx_transaction_infos_timestamp;
 VACUUM FULL banking_stage_results.transaction_infos;
-
-ALTER TABLE banking_stage_results.transaction_infos ADD supp_infos text;
-
-ALTER TABLE banking_stage_results.blocks ADD supp_infos text;

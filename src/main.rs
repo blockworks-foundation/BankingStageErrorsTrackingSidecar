@@ -15,10 +15,6 @@ use log::{debug, error};
 use prometheus::{opts, register_int_counter, register_int_gauge, IntCounter, IntGauge};
 use solana_sdk::signature::Signature;
 use transaction_info::TransactionInfo;
-use yellowstone_grpc_client::GeyserGrpcClient;
-use yellowstone_grpc_proto::prelude::{
-    subscribe_update::UpdateOneof, CommitmentLevel, SubscribeRequestFilterBlocks,
-};
 
 mod block_info;
 mod cli;
@@ -114,7 +110,7 @@ pub async fn start_tracking_banking_stage_errors(
     slot_by_errors: Arc<DashMap<u64, u64>>,
 ) {
     let token: Option<String> = None;
-    let mut client = GeyserGrpcClient::connect(grpc_address, token, None).unwrap();
+    let mut client = yellowstone_grpc_client::GeyserGrpcClient::connect(grpc_address, token, None).unwrap();
 
     let mut geyser_stream = client
         .subscribe_once(
@@ -124,7 +120,7 @@ pub async fn start_tracking_banking_stage_errors(
             Default::default(),
             Default::default(),
             Default::default(),
-            Some(CommitmentLevel::Processed),
+            Some(yellowstone_grpc_proto::prelude::CommitmentLevel::Processed),
             Default::default(),
             true,
         )
@@ -141,7 +137,7 @@ pub async fn start_tracking_banking_stage_errors(
         };
 
         match update {
-            UpdateOneof::BankingTransactionErrors(transaction) => {
+            yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof::BankingTransactionErrors(transaction) => {
                 BANKING_STAGE_ERROR_EVENT_COUNT.inc();
                 let sig = transaction.signature.to_string();
                 match slot_by_errors.get_mut(&transaction.slot) {
@@ -176,8 +172,10 @@ async fn main() {
 
     let _prometheus_jh = PrometheusSync::sync(args.prometheus_addr.clone());
 
-    let grpc_block_addr = args.block_grpc_address;
-    let mut client = GeyserGrpcClient::connect(grpc_block_addr, args.grpc_x_token, None).unwrap();
+    println!("x token is {}", args.grpc_x_token.clone().unwrap_or_default());
+
+    let grpc_block_addr = args.grpc_address_to_fetch_blocks;
+    let mut client = yellowstone_grpc_client_original::GeyserGrpcClient::connect(grpc_block_addr, args.grpc_x_token, None).unwrap();
     let map_of_infos = Arc::new(DashMap::<String, TransactionInfo>::new());
     let slot_by_errors = Arc::new(DashMap::<u64, u64>::new());
 
@@ -186,33 +184,37 @@ async fn main() {
 
     let mut blocks_subs = HashMap::new();
     blocks_subs.insert(
-        "client".to_string(),
-        SubscribeRequestFilterBlocks {
+        "sidecar_block_subscription".to_string(),
+        yellowstone_grpc_proto_original::prelude::SubscribeRequestFilterBlocks {
             account_include: Default::default(),
             include_transactions: Some(true),
             include_accounts: Some(false),
             include_entries: Some(false),
         },
     );
-    let commitment_level = CommitmentLevel::Processed;
+
+    let mut slot_sub = HashMap::new();
+    slot_sub.insert("slot_sub".to_string(), yellowstone_grpc_proto_original::prelude::SubscribeRequestFilterSlots {
+        filter_by_commitment: None,
+    });
 
     let mut geyser_stream = client
         .subscribe_once(
-            HashMap::new(),
+            slot_sub,
             Default::default(),
             HashMap::new(),
             Default::default(),
             blocks_subs,
             Default::default(),
-            Some(commitment_level),
+            None,
             Default::default(),
-            true,
+            None,
         )
         .await
         .unwrap();
 
     postgres.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());
-    let _jhs = args
+    let jhs = args
         .banking_grpc_addresses
         .iter()
         .map(|address| {
@@ -235,7 +237,7 @@ async fn main() {
         };
 
         match update {
-            UpdateOneof::Block(block) => {
+            yellowstone_grpc_proto_original::prelude::subscribe_update::UpdateOneof::Block(block) => {
                 debug!("got block {}", block.slot);
                 BLOCK_TXS.set(block.transactions.len() as i64);
                 BANKING_STAGE_BLOCKS_COUNTER.inc();
@@ -273,4 +275,6 @@ async fn main() {
             _ => {}
         };
     }
+    log::error!("stopping the sidecar, geyser block stream is broken");
+    let _ = futures::future::select_all(jhs).await;
 }

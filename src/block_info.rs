@@ -13,7 +13,6 @@ use solana_sdk::{
 };
 use solana_transaction_status::{RewardType, UiConfirmedBlock};
 use std::collections::HashMap;
-use yellowstone_grpc_proto::prelude::SubscribeUpdateBlock;
 
 #[derive(Serialize, Debug, Clone)]
 pub struct AccountUsage {
@@ -50,10 +49,11 @@ impl From<&AccountData> for AccountUsage {
 
 #[derive(Serialize, Debug)]
 pub struct BlockSupplimentaryInfo {
-    pub median: u64,
+    pub p_min: u64,
+    pub p_median: u64,
     pub p_75: u64,
-    pub p_95: u64,
-    pub p_99: u64,
+    pub p_90: u64,
+    pub p_max: u64,
 }
 
 pub struct BlockInfo {
@@ -67,7 +67,7 @@ pub struct BlockInfo {
     pub total_cu_requested: i64,
     pub heavily_writelocked_accounts: Vec<AccountUsage>,
     pub heavily_readlocked_accounts: Vec<AccountUsage>,
-    pub sup_info: BlockSupplimentaryInfo,
+    pub sup_info: Option<BlockSupplimentaryInfo>,
 }
 
 impl BlockInfo {
@@ -200,7 +200,25 @@ impl BlockInfo {
         (heavily_writelocked_accounts, heavily_readlocked_accounts)
     }
 
-    pub fn new(block: &SubscribeUpdateBlock) -> BlockInfo {
+    pub fn calculate_supp_info(prio_fees_in_block: &mut Vec<u64>,) -> Option<BlockSupplimentaryInfo>{
+        if !prio_fees_in_block.is_empty() {
+            prio_fees_in_block.sort();
+            let median_index = prio_fees_in_block.len() / 2;
+            let p75_index = prio_fees_in_block.len() * 75 / 100;
+            let p90_index = prio_fees_in_block.len() * 90 / 100;
+            Some(BlockSupplimentaryInfo {
+                p_min: prio_fees_in_block[0],
+                p_median: prio_fees_in_block[median_index],
+                p_75: prio_fees_in_block[p75_index],
+                p_90: prio_fees_in_block[p90_index],
+                p_max: prio_fees_in_block.last().cloned().unwrap_or_default(),
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn new(block: &yellowstone_grpc_proto_original::prelude::SubscribeUpdateBlock) -> BlockInfo {
         let block_hash = block.blockhash.clone();
         let slot = block.slot;
         let leader_identity = block
@@ -310,12 +328,9 @@ impl BlockInfo {
 
         let (heavily_writelocked_accounts, heavily_readlocked_accounts) =
             Self::calculate_account_usage(&writelocked_accounts, &readlocked_accounts);
-        prio_fees_in_block.sort();
-        let median_index = prio_fees_in_block.len() / 2;
-        let p75_index = prio_fees_in_block.len() * 75 / 100;
-        let p95_index = prio_fees_in_block.len() * 95 / 100;
-        let p99_index = prio_fees_in_block.len() * 99 / 100;
-
+        
+        let sup_info = Self::calculate_supp_info(&mut prio_fees_in_block);
+        
         BlockInfo {
             block_hash,
             slot: slot as i64,
@@ -327,12 +342,7 @@ impl BlockInfo {
             total_cu_requested: total_cu_requested as i64,
             heavily_writelocked_accounts,
             heavily_readlocked_accounts,
-            sup_info: BlockSupplimentaryInfo {
-                median: prio_fees_in_block[median_index],
-                p_75: prio_fees_in_block[p75_index],
-                p_95: prio_fees_in_block[p95_index],
-                p_99: prio_fees_in_block[p99_index],
-            },
+            sup_info,
         }
     }
 
@@ -413,11 +423,7 @@ impl BlockInfo {
         let (heavily_writelocked_accounts, heavily_readlocked_accounts) =
             Self::calculate_account_usage(&writelocked_accounts, &readlocked_accounts);
 
-        let median_index = prio_fees_in_block.len() / 2;
-        let p75_index = prio_fees_in_block.len() * 75 / 100;
-        let p95_index = prio_fees_in_block.len() * 95 / 100;
-        let p99_index = prio_fees_in_block.len() * 99 / 100;
-
+        let sup_info = Self::calculate_supp_info(&mut prio_fees_in_block);
         Some(BlockInfo {
             block_hash,
             slot: slot as i64,
@@ -429,12 +435,7 @@ impl BlockInfo {
             total_cu_requested: total_cu_requested as i64,
             heavily_writelocked_accounts,
             heavily_readlocked_accounts,
-            sup_info: BlockSupplimentaryInfo {
-                median: prio_fees_in_block[median_index],
-                p_75: prio_fees_in_block[p75_index],
-                p_95: prio_fees_in_block[p95_index],
-                p_99: prio_fees_in_block[p99_index],
-            },
+            sup_info,
         })
     }
 }

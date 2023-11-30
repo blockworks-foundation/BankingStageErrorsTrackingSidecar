@@ -4,9 +4,9 @@ use clap::Parser;
 #[command(author, version, about, long_about = None)]
 pub struct Args {
     #[arg(short, long, default_value_t = String::from("http://127.0.0.1:10000"))]
-    pub block_grpc_address: String,
+    pub grpc_address_to_fetch_blocks: String,
 
-    #[arg(long)]
+    #[arg(short='x', long)]
     pub grpc_x_token: Option<String>,
 
     #[arg(short, long, value_delimiter = ',')]
