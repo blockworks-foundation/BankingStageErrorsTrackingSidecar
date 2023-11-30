@@ -110,7 +110,8 @@ pub async fn start_tracking_banking_stage_errors(
     slot_by_errors: Arc<DashMap<u64, u64>>,
 ) {
     let token: Option<String> = None;
-    let mut client = yellowstone_grpc_client::GeyserGrpcClient::connect(grpc_address, token, None).unwrap();
+    let mut client =
+        yellowstone_grpc_client::GeyserGrpcClient::connect(grpc_address, token, None).unwrap();
 
     let mut geyser_stream = client
         .subscribe_once(
@@ -173,7 +174,12 @@ async fn main() {
     let _prometheus_jh = PrometheusSync::sync(args.prometheus_addr.clone());
 
     let grpc_block_addr = args.grpc_address_to_fetch_blocks;
-    let mut client = yellowstone_grpc_client_original::GeyserGrpcClient::connect(grpc_block_addr, args.grpc_x_token, None).unwrap();
+    let mut client = yellowstone_grpc_client_original::GeyserGrpcClient::connect(
+        grpc_block_addr,
+        args.grpc_x_token,
+        None,
+    )
+    .unwrap();
     let map_of_infos = Arc::new(DashMap::<String, TransactionInfo>::new());
     let slot_by_errors = Arc::new(DashMap::<u64, u64>::new());
 
@@ -192,9 +198,12 @@ async fn main() {
     );
 
     let mut slot_sub = HashMap::new();
-    slot_sub.insert("slot_sub".to_string(), yellowstone_grpc_proto_original::prelude::SubscribeRequestFilterSlots {
-        filter_by_commitment: None,
-    });
+    slot_sub.insert(
+        "slot_sub".to_string(),
+        yellowstone_grpc_proto_original::prelude::SubscribeRequestFilterSlots {
+            filter_by_commitment: None,
+        },
+    );
 
     let mut geyser_stream = client
         .subscribe_once(
@@ -235,7 +244,9 @@ async fn main() {
         };
 
         match update {
-            yellowstone_grpc_proto_original::prelude::subscribe_update::UpdateOneof::Block(block) => {
+            yellowstone_grpc_proto_original::prelude::subscribe_update::UpdateOneof::Block(
+                block,
+            ) => {
                 debug!("got block {}", block.slot);
                 BLOCK_TXS.set(block.transactions.len() as i64);
                 BANKING_STAGE_BLOCKS_COUNTER.inc();
@@ -243,7 +254,7 @@ async fn main() {
                 let postgres = postgres.clone();
                 let slot = slot.clone();
                 let map_of_infos = map_of_infos.clone();
-                let slot_by_error = slot_by_errors.clone();
+                let slot_by_errors = slot_by_errors.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(Duration::from_secs(30)).await;
                     for transaction in &block.transactions {
@@ -256,7 +267,9 @@ async fn main() {
                         }
                     }
 
-                    let block_info = BlockInfo::new(&block);
+                    let banking_stage_error_count =
+                        slot_by_errors.get(&block.slot).map(|x| *x.value() as i64);
+                    let block_info = BlockInfo::new(&block, banking_stage_error_count);
 
                     TXERROR_COUNT.add(
                         block_info.processed_transactions - block_info.successful_transactions,
@@ -265,7 +278,7 @@ async fn main() {
                         error!("Error saving block {}", e);
                     }
                     slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
-                    slot_by_error.remove(&block.slot);
+                    slot_by_errors.remove(&block.slot);
                     BANKING_STAGE_BLOCKS_TASK.dec();
                 });
                 // delay queue so that we get all the banking stage errors before processing block

@@ -14,7 +14,13 @@ use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
 use serde::Serialize;
 use solana_sdk::transaction::TransactionError;
-use tokio_postgres::{config::SslMode, tls::MakeTlsConnect, types::{ToSql, Type}, Client, NoTls, Socket, CopyInSink, binary_copy::BinaryCopyInWriter};
+use tokio_postgres::{
+    binary_copy::BinaryCopyInWriter,
+    config::SslMode,
+    tls::MakeTlsConnect,
+    types::{ToSql, Type},
+    Client, CopyInSink, NoTls, Socket,
+};
 
 use crate::{block_info::BlockInfo, transaction_info::TransactionInfo};
 
@@ -121,14 +127,12 @@ impl PostgresSession {
         let txs: Vec<PostgresTransactionInfo> =
             txs.iter().map(PostgresTransactionInfo::from).collect();
 
-        let statement = format!(
-            r#"
+        let statement = r#"
                 COPY banking_stage_results.transaction_infos(
                     signature, errors, is_executed, is_confirmed, first_notification_slot, cu_requested, prioritization_fees, utc_timestamp, accounts_used, processed_slot
                 ) FROM STDIN BINARY
-            "#,
-        );
-        let sink: CopyInSink<bytes::Bytes> = self.copy_in(&statement).await.unwrap();
+            "#;
+        let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement).await.unwrap();
         let writer = BinaryCopyInWriter::new(
             sink,
             &[
@@ -157,21 +161,23 @@ impl PostgresSession {
             args.push(&tx.utc_timestamp);
             args.push(&tx.accounts_used);
             args.push(&tx.processed_slot);
-            
+
             writer.as_mut().write(&args).await.unwrap();
         }
         writer.finish().await.unwrap();
         Ok(())
     }
 
-    pub async fn copy_in(&self, statement: &str) -> Result<CopyInSink<bytes::Bytes>, tokio_postgres::error::Error> {
+    pub async fn copy_in(
+        &self,
+        statement: &str,
+    ) -> Result<CopyInSink<bytes::Bytes>, tokio_postgres::error::Error> {
         // BinaryCopyInWriter
         // https://github.com/sfackler/rust-postgres/blob/master/tokio-postgres/tests/test/binary_copy.rs
         self.client.copy_in(statement).await
     }
 
     pub async fn save_block(&self, block_info: BlockInfo) -> anyhow::Result<()> {
-
         const NUMBER_OF_ARGS: usize = 11;
         let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS);
         args.push(&block_info.block_hash);
@@ -192,14 +198,12 @@ impl PostgresSession {
         let supp_infos = serde_json::to_string(&block_info.sup_info).unwrap_or_default();
         args.push(&supp_infos);
 
-        let statement = format!(
-            r#"
+        let statement = r#"
                 COPY banking_stage_results.blocks(
                     block_hash, slot, leader_identity, successful_transactions, banking_stage_errors, processed_transactions, total_cu_used, total_cu_requested, heavily_writelocked_accounts, heavily_readlocked_accounts, supp_infos
                 ) FROM STDIN BINARY
-            "#,
-        );
-        let sink: CopyInSink<bytes::Bytes> = self.copy_in(&statement).await.unwrap();
+            "#;
+        let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement).await.unwrap();
         let writer = BinaryCopyInWriter::new(
             sink,
             &[

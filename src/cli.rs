@@ -6,7 +6,7 @@ pub struct Args {
     #[arg(short, long, default_value_t = String::from("http://127.0.0.1:10000"))]
     pub grpc_address_to_fetch_blocks: String,
 
-    #[arg(short='x', long)]
+    #[arg(short = 'x', long)]
     pub grpc_x_token: Option<String>,
 
     #[arg(short, long, value_delimiter = ',')]

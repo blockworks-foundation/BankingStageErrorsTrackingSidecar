@@ -125,7 +125,8 @@ impl BlockInfo {
         };
         let prioritization_fees = prio_fees.unwrap_or_default();
         prio_fees_in_block.push(prioritization_fees);
-        let cu_requested = std::cmp::min(1_400_000, cu_requested.unwrap_or(200000 * nb_ix_except_cb)) as u64;
+        let cu_requested =
+            std::cmp::min(1_400_000, cu_requested.unwrap_or(200000 * nb_ix_except_cb));
         *total_cu_requested += cu_requested;
         if !is_vote {
             let accounts = message
@@ -200,7 +201,9 @@ impl BlockInfo {
         (heavily_writelocked_accounts, heavily_readlocked_accounts)
     }
 
-    pub fn calculate_supp_info(prio_fees_in_block: &mut Vec<u64>,) -> Option<BlockSupplimentaryInfo>{
+    pub fn calculate_supp_info(
+        prio_fees_in_block: &mut Vec<u64>,
+    ) -> Option<BlockSupplimentaryInfo> {
         if !prio_fees_in_block.is_empty() {
             prio_fees_in_block.sort();
             let median_index = prio_fees_in_block.len() / 2;
@@ -218,7 +221,10 @@ impl BlockInfo {
         }
     }
 
-    pub fn new(block: &yellowstone_grpc_proto_original::prelude::SubscribeUpdateBlock) -> BlockInfo {
+    pub fn new(
+        block: &yellowstone_grpc_proto_original::prelude::SubscribeUpdateBlock,
+        banking_stage_errors: Option<i64>,
+    ) -> BlockInfo {
         let block_hash = block.blockhash.clone();
         let slot = block.slot;
         let leader_identity = block
@@ -328,16 +334,16 @@ impl BlockInfo {
 
         let (heavily_writelocked_accounts, heavily_readlocked_accounts) =
             Self::calculate_account_usage(&writelocked_accounts, &readlocked_accounts);
-        
+
         let sup_info = Self::calculate_supp_info(&mut prio_fees_in_block);
-        
+
         BlockInfo {
             block_hash,
             slot: slot as i64,
             leader_identity,
             successful_transactions: successful_transactions as i64,
             processed_transactions: processed_transactions as i64,
-            banking_stage_errors: None,
+            banking_stage_errors,
             total_cu_used,
             total_cu_requested: total_cu_requested as i64,
             heavily_writelocked_accounts,
@@ -406,7 +412,7 @@ impl BlockInfo {
             let is_vote = false;
 
             Self::process_versioned_message(
-                &message,
+                message,
                 &mut prio_fees_in_block,
                 &mut writelocked_accounts,
                 &mut readlocked_accounts,

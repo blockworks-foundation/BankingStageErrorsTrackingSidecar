@@ -221,7 +221,11 @@ impl TransactionInfo {
         self.processed_slot = Some(slot);
     }
 
-    pub fn add_transaction(&mut self, transaction: &yellowstone_grpc_proto_original::prelude::SubscribeUpdateTransactionInfo, slot: Slot) {
+    pub fn add_transaction(
+        &mut self,
+        transaction: &yellowstone_grpc_proto_original::prelude::SubscribeUpdateTransactionInfo,
+        slot: Slot,
+    ) {
         let Some(transaction) = &transaction.transaction else {
             return;
         };
