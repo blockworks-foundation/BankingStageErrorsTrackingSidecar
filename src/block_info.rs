@@ -140,9 +140,7 @@ impl BlockInfo {
                     Some(x) => {
                         x.cu_requested += cu_requested;
                         x.cu_consumed += cu_consumed;
-                        if prioritization_fees > 0 {
-                            x.vec_pf.push(prioritization_fees);
-                        }
+                        x.vec_pf.push(prioritization_fees);
                     }
                     None => {
                         writelocked_accounts.insert(
@@ -163,9 +161,7 @@ impl BlockInfo {
                     Some(x) => {
                         x.cu_requested += cu_requested;
                         x.cu_consumed += cu_consumed;
-                        if prioritization_fees > 0 {
-                            x.vec_pf.push(prioritization_fees);
-                        }
+                        x.vec_pf.push(prioritization_fees);
                     }
                     None => {
                         readlocked_accounts.insert(
