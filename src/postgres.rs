@@ -133,6 +133,7 @@ impl PostgresSession {
             sink,
             &[
                 Type::TEXT,
+                Type::TEXT,
                 Type::BOOL,
                 Type::BOOL,
                 Type::INT8,
@@ -141,7 +142,6 @@ impl PostgresSession {
                 Type::TIMESTAMPTZ,
                 Type::TEXT,
                 Type::INT8,
-                Type::TEXT,
             ],
         );
         pin_mut!(writer);
