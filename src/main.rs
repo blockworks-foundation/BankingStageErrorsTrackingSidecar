@@ -172,8 +172,6 @@ async fn main() {
 
     let _prometheus_jh = PrometheusSync::sync(args.prometheus_addr.clone());
 
-    println!("x token is {}", args.grpc_x_token.clone().unwrap_or_default());
-
     let grpc_block_addr = args.grpc_address_to_fetch_blocks;
     let mut client = yellowstone_grpc_client_original::GeyserGrpcClient::connect(grpc_block_addr, args.grpc_x_token, None).unwrap();
     let map_of_infos = Arc::new(DashMap::<String, TransactionInfo>::new());

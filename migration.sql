@@ -15,8 +15,8 @@ CREATE TABLE banking_stage_results.transaction_infos (
 );
 
 CREATE TABLE banking_stage_results.blocks (
-  block_hash CHAR(44),
   slot BIGINT PRIMARY KEY,
+  block_hash CHAR(44),
   leader_identity CHAR(44),
   successful_transactions BIGINT,
   banking_stage_errors BIGINT,

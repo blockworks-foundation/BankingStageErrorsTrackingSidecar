@@ -133,8 +133,8 @@ impl PostgresSession {
             sink,
             &[
                 Type::TEXT,
-                Type::CHAR,
-                Type::CHAR,
+                Type::BOOL,
+                Type::BOOL,
                 Type::INT8,
                 Type::INT8,
                 Type::INT8,
