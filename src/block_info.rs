@@ -13,7 +13,6 @@ use solana_sdk::{
 };
 use solana_transaction_status::{RewardType, UiConfirmedBlock};
 use std::collections::HashMap;
-use yellowstone_grpc_proto::prelude::SubscribeUpdateBlock;
 
 #[derive(Serialize, Debug, Clone)]
 pub struct AccountUsage {
@@ -48,6 +47,15 @@ impl From<&AccountData> for AccountUsage {
     }
 }
 
+#[derive(Serialize, Debug)]
+pub struct BlockSupplimentaryInfo {
+    pub p_min: u64,
+    pub p_median: u64,
+    pub p_75: u64,
+    pub p_90: u64,
+    pub p_max: u64,
+}
+
 pub struct BlockInfo {
     pub block_hash: String,
     pub slot: i64,
@@ -59,10 +67,160 @@ pub struct BlockInfo {
     pub total_cu_requested: i64,
     pub heavily_writelocked_accounts: Vec<AccountUsage>,
     pub heavily_readlocked_accounts: Vec<AccountUsage>,
+    pub sup_info: Option<BlockSupplimentaryInfo>,
 }
 
 impl BlockInfo {
-    pub fn new(block: &SubscribeUpdateBlock) -> BlockInfo {
+    pub fn process_versioned_message(
+        message: &VersionedMessage,
+        prio_fees_in_block: &mut Vec<u64>,
+        writelocked_accounts: &mut HashMap<Pubkey, AccountData>,
+        readlocked_accounts: &mut HashMap<Pubkey, AccountData>,
+        cu_consumed: u64,
+        total_cu_requested: &mut u64,
+        is_vote: bool,
+    ) {
+        let (cu_requested, prio_fees, nb_ix_except_cb) = {
+            let mut cu_request: Option<u64> = None;
+            let mut prio_fees: Option<u64> = None;
+            let mut nb_ix_except_cb: u64 = 0;
+
+            for ix in message.instructions() {
+                if ix
+                    .program_id(message.static_account_keys())
+                    .eq(&compute_budget::id())
+                {
+                    let ix_which =
+                        try_from_slice_unchecked::<ComputeBudgetInstruction>(ix.data.as_slice());
+                    if let Ok(ix_which) = ix_which {
+                        match ix_which {
+                            ComputeBudgetInstruction::RequestUnitsDeprecated {
+                                units,
+                                additional_fee,
+                            } => {
+                                cu_request = Some(units as u64);
+                                if additional_fee > 0 {
+                                    prio_fees = Some(
+                                        (units as u64)
+                                            .saturating_mul(1000)
+                                            .saturating_div(additional_fee as u64),
+                                    );
+                                }
+                            }
+                            ComputeBudgetInstruction::SetComputeUnitLimit(units) => {
+                                cu_request = Some(units as u64)
+                            }
+                            ComputeBudgetInstruction::SetComputeUnitPrice(price) => {
+                                prio_fees = Some(price)
+                            }
+                            _ => {}
+                        }
+                    }
+                } else {
+                    nb_ix_except_cb += 1;
+                }
+            }
+
+            (cu_request, prio_fees, nb_ix_except_cb)
+        };
+        let prioritization_fees = prio_fees.unwrap_or_default();
+        prio_fees_in_block.push(prioritization_fees);
+        let cu_requested =
+            std::cmp::min(1_400_000, cu_requested.unwrap_or(200000 * nb_ix_except_cb));
+        *total_cu_requested += cu_requested;
+        if !is_vote {
+            let accounts = message
+                .static_account_keys()
+                .iter()
+                .enumerate()
+                .map(|(index, account)| (message.is_maybe_writable(index), *account))
+                .collect_vec();
+            for writable_account in accounts.iter().filter(|x| x.0).map(|x| x.1) {
+                match writelocked_accounts.get_mut(&writable_account) {
+                    Some(x) => {
+                        x.cu_requested += cu_requested;
+                        x.cu_consumed += cu_consumed;
+                        x.vec_pf.push(prioritization_fees);
+                    }
+                    None => {
+                        writelocked_accounts.insert(
+                            writable_account,
+                            AccountData {
+                                key: writable_account.to_string(),
+                                cu_consumed,
+                                cu_requested,
+                                vec_pf: vec![prioritization_fees],
+                            },
+                        );
+                    }
+                }
+            }
+
+            for readable_account in accounts.iter().filter(|x| !x.0).map(|x| x.1) {
+                match readlocked_accounts.get_mut(&readable_account) {
+                    Some(x) => {
+                        x.cu_requested += cu_requested;
+                        x.cu_consumed += cu_consumed;
+                        x.vec_pf.push(prioritization_fees);
+                    }
+                    None => {
+                        readlocked_accounts.insert(
+                            readable_account,
+                            AccountData {
+                                key: readable_account.to_string(),
+                                cu_consumed,
+                                cu_requested,
+                                vec_pf: vec![prioritization_fees],
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn calculate_account_usage(
+        writelocked_accounts: &HashMap<Pubkey, AccountData>,
+        readlocked_accounts: &HashMap<Pubkey, AccountData>,
+    ) -> (Vec<AccountUsage>, Vec<AccountUsage>) {
+        let mut heavily_writelocked_accounts = writelocked_accounts
+            .iter()
+            .map(|(_, data)| AccountUsage::from(data))
+            .collect_vec();
+        heavily_writelocked_accounts.sort_by(|lhs, rhs| rhs.cu_consumed.cmp(&lhs.cu_consumed));
+
+        let mut heavily_readlocked_accounts: Vec<_> = readlocked_accounts
+            .iter()
+            .map(|(_, data)| AccountUsage::from(data))
+            .collect();
+        heavily_readlocked_accounts.sort_by(|lhs, rhs| rhs.cu_consumed.cmp(&lhs.cu_consumed));
+        (heavily_writelocked_accounts, heavily_readlocked_accounts)
+    }
+
+    pub fn calculate_supp_info(
+        prio_fees_in_block: &mut Vec<u64>,
+    ) -> Option<BlockSupplimentaryInfo> {
+        if !prio_fees_in_block.is_empty() {
+            prio_fees_in_block.sort();
+            let median_index = prio_fees_in_block.len() / 2;
+            let p75_index = prio_fees_in_block.len() * 75 / 100;
+            let p90_index = prio_fees_in_block.len() * 90 / 100;
+            Some(BlockSupplimentaryInfo {
+                p_min: prio_fees_in_block[0],
+                p_median: prio_fees_in_block[median_index],
+                p_75: prio_fees_in_block[p75_index],
+                p_90: prio_fees_in_block[p90_index],
+                p_max: prio_fees_in_block.last().cloned().unwrap_or_default(),
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn new(
+        block: &yellowstone_grpc_proto_original::prelude::SubscribeUpdateBlock,
+        banking_stage_errors: Option<i64>,
+    ) -> BlockInfo {
         let block_hash = block.blockhash.clone();
         let slot = block.slot;
         let leader_identity = block
@@ -96,6 +254,7 @@ impl BlockInfo {
         let mut writelocked_accounts: HashMap<Pubkey, AccountData> = HashMap::new();
         let mut readlocked_accounts: HashMap<Pubkey, AccountData> = HashMap::new();
         let mut total_cu_requested: u64 = 0;
+        let mut prio_fees_in_block = vec![];
         for transaction in &block.transactions {
             let Some(tx) = &transaction.transaction else {
                 continue;
@@ -158,139 +317,21 @@ impl BlockInfo {
                     .collect(),
             });
 
-            let legacy_compute_budget: Option<(u32, Option<u64>)> =
-                message.instructions().iter().find_map(|i| {
-                    if i.program_id(message.static_account_keys())
-                        .eq(&compute_budget::id())
-                    {
-                        if let Ok(ComputeBudgetInstruction::RequestUnitsDeprecated {
-                            units,
-                            additional_fee,
-                        }) = try_from_slice_unchecked(i.data.as_slice())
-                        {
-                            if additional_fee > 0 {
-                                return Some((
-                                    units,
-                                    Some(
-                                        ((units.saturating_mul(1000))
-                                            .saturating_div(additional_fee))
-                                            as u64,
-                                    ),
-                                ));
-                            } else {
-                                return Some((units, None));
-                            }
-                        }
-                    }
-                    None
-                });
-
-            let legacy_cu_requested = legacy_compute_budget.map(|x| x.0);
-
-            let cu_requested = message
-                .instructions()
-                .iter()
-                .find_map(|i| {
-                    if i.program_id(message.static_account_keys())
-                        .eq(&compute_budget::id())
-                    {
-                        if let Ok(ComputeBudgetInstruction::SetComputeUnitLimit(limit)) =
-                            try_from_slice_unchecked(i.data.as_slice())
-                        {
-                            return Some(limit);
-                        }
-                    }
-                    None
-                })
-                .or(legacy_cu_requested);
-
-            let prioritization_fees = message
-                .instructions()
-                .iter()
-                .find_map(|i| {
-                    if i.program_id(message.static_account_keys())
-                        .eq(&compute_budget::id())
-                    {
-                        if let Ok(ComputeBudgetInstruction::SetComputeUnitPrice(price)) =
-                            try_from_slice_unchecked(i.data.as_slice())
-                        {
-                            return Some(price);
-                        }
-                    }
-                    None
-                })
-                .unwrap_or_default();
-
-            let cu_requested = cu_requested.unwrap_or(200000) as u64;
-            let cu_consumed = meta.compute_units_consumed.unwrap_or(0);
-            total_cu_requested += cu_requested;
-
-            let accounts = message
-                .static_account_keys()
-                .iter()
-                .enumerate()
-                .map(|(index, account)| (message.is_maybe_writable(index), *account))
-                .collect_vec();
-            for writable_account in accounts.iter().filter(|x| x.0).map(|x| x.1) {
-                match writelocked_accounts.get_mut(&writable_account) {
-                    Some(x) => {
-                        x.cu_requested += cu_requested;
-                        x.cu_consumed += cu_consumed;
-                        if prioritization_fees > 0 {
-                            x.vec_pf.push(prioritization_fees);
-                        }
-                    }
-                    None => {
-                        writelocked_accounts.insert(
-                            writable_account,
-                            AccountData {
-                                key: writable_account.to_string(),
-                                cu_consumed,
-                                cu_requested,
-                                vec_pf: vec![prioritization_fees],
-                            },
-                        );
-                    }
-                }
-            }
-
-            for readable_account in accounts.iter().filter(|x| !x.0).map(|x| x.1) {
-                match readlocked_accounts.get_mut(&readable_account) {
-                    Some(x) => {
-                        x.cu_requested += cu_requested;
-                        x.cu_consumed += cu_consumed;
-                        if prioritization_fees > 0 {
-                            x.vec_pf.push(prioritization_fees);
-                        }
-                    }
-                    None => {
-                        readlocked_accounts.insert(
-                            readable_account,
-                            AccountData {
-                                key: readable_account.to_string(),
-                                cu_consumed,
-                                cu_requested,
-                                vec_pf: vec![prioritization_fees],
-                            },
-                        );
-                    }
-                }
-            }
+            Self::process_versioned_message(
+                &message,
+                &mut prio_fees_in_block,
+                &mut writelocked_accounts,
+                &mut readlocked_accounts,
+                meta.compute_units_consumed.unwrap_or(0),
+                &mut total_cu_requested,
+                transaction.is_vote,
+            );
         }
 
-        let mut heavily_writelocked_accounts = writelocked_accounts
-            .iter()
-            .filter(|(_, account)| account.cu_consumed > 1000000)
-            .map(|(_, data)| AccountUsage::from(data))
-            .collect_vec();
-        heavily_writelocked_accounts.sort_by(|lhs, rhs| rhs.cu_consumed.cmp(&lhs.cu_consumed));
+        let (heavily_writelocked_accounts, heavily_readlocked_accounts) =
+            Self::calculate_account_usage(&writelocked_accounts, &readlocked_accounts);
 
-        let mut heavily_readlocked_accounts: Vec<_> = readlocked_accounts
-            .iter()
-            .filter(|(_, acc)| acc.cu_consumed > 1000000)
-            .map(|(_, data)| AccountUsage::from(data))
-            .collect();
-        heavily_readlocked_accounts.sort_by(|lhs, rhs| rhs.cu_consumed.cmp(&lhs.cu_consumed));
+        let sup_info = Self::calculate_supp_info(&mut prio_fees_in_block);
 
         BlockInfo {
             block_hash,
@@ -298,15 +339,16 @@ impl BlockInfo {
             leader_identity,
             successful_transactions: successful_transactions as i64,
             processed_transactions: processed_transactions as i64,
-            banking_stage_errors: None,
+            banking_stage_errors,
             total_cu_used,
             total_cu_requested: total_cu_requested as i64,
             heavily_writelocked_accounts,
             heavily_readlocked_accounts,
+            sup_info,
         }
     }
 
-    pub fn new_from_rpc_block(
+    pub fn _new_from_rpc_block(
         slot: Slot,
         block: &UiConfirmedBlock,
         banking_stage_errors_count: i64,
@@ -352,6 +394,7 @@ impl BlockInfo {
         let mut writelocked_accounts: HashMap<Pubkey, AccountData> = HashMap::new();
         let mut readlocked_accounts: HashMap<Pubkey, AccountData> = HashMap::new();
         let mut total_cu_requested: u64 = 0;
+        let mut prio_fees_in_block = vec![];
         for transaction in transactions {
             let Some(tx) = transaction.transaction.decode() else {
                 continue;
@@ -362,143 +405,27 @@ impl BlockInfo {
             let Some(meta) = &transaction.meta else {
                 continue;
             };
+            let is_vote = false;
 
-            let legacy_compute_budget: Option<(u32, Option<u64>)> =
-                message.instructions().iter().find_map(|i| {
-                    if i.program_id(message.static_account_keys())
-                        .eq(&compute_budget::id())
-                    {
-                        if let Ok(ComputeBudgetInstruction::RequestUnitsDeprecated {
-                            units,
-                            additional_fee,
-                        }) = try_from_slice_unchecked(i.data.as_slice())
-                        {
-                            if additional_fee > 0 {
-                                return Some((
-                                    units,
-                                    Some(
-                                        ((units.saturating_mul(1000))
-                                            .saturating_div(additional_fee))
-                                            as u64,
-                                    ),
-                                ));
-                            } else {
-                                return Some((units, None));
-                            }
-                        }
-                    }
-                    None
-                });
-
-            let legacy_cu_requested = legacy_compute_budget.map(|x| x.0);
-
-            let cu_requested = message
-                .instructions()
-                .iter()
-                .find_map(|i| {
-                    if i.program_id(message.static_account_keys())
-                        .eq(&compute_budget::id())
-                    {
-                        if let Ok(ComputeBudgetInstruction::SetComputeUnitLimit(limit)) =
-                            try_from_slice_unchecked(i.data.as_slice())
-                        {
-                            return Some(limit);
-                        }
-                    }
-                    None
-                })
-                .or(legacy_cu_requested);
-            let cu_requested = cu_requested.unwrap_or(200000) as u64;
-            let cu_consumed = match meta.compute_units_consumed {
-                solana_transaction_status::option_serializer::OptionSerializer::Some(x) => x,
-                solana_transaction_status::option_serializer::OptionSerializer::Skip => 0,
-                solana_transaction_status::option_serializer::OptionSerializer::None => 0,
-            };
-            total_cu_requested += cu_requested;
-
-            let prioritization_fees = message
-                .instructions()
-                .iter()
-                .find_map(|i| {
-                    if i.program_id(message.static_account_keys())
-                        .eq(&compute_budget::id())
-                    {
-                        if let Ok(ComputeBudgetInstruction::SetComputeUnitPrice(price)) =
-                            try_from_slice_unchecked(i.data.as_slice())
-                        {
-                            return Some(price);
-                        }
-                    }
-                    None
-                })
-                .unwrap_or_default();
-
-            let accounts = message
-                .static_account_keys()
-                .iter()
-                .enumerate()
-                .map(|(index, account)| (message.is_maybe_writable(index), *account))
-                .collect_vec();
-            for writable_account in accounts.iter().filter(|x| x.0).map(|x| x.1) {
-                match writelocked_accounts.get_mut(&writable_account) {
-                    Some(x) => {
-                        x.cu_requested += cu_requested;
-                        x.cu_consumed += cu_consumed;
-                        if prioritization_fees > 0 {
-                            x.vec_pf.push(prioritization_fees)
-                        }
-                    }
-                    None => {
-                        writelocked_accounts.insert(
-                            writable_account,
-                            AccountData {
-                                key: writable_account.to_string(),
-                                cu_consumed,
-                                cu_requested,
-                                vec_pf: vec![prioritization_fees],
-                            },
-                        );
-                    }
-                }
-            }
-
-            for readable_account in accounts.iter().filter(|x| !x.0).map(|x| x.1) {
-                match readlocked_accounts.get_mut(&readable_account) {
-                    Some(x) => {
-                        x.cu_requested += cu_requested;
-                        x.cu_consumed += cu_consumed;
-                        if prioritization_fees > 0 {
-                            x.vec_pf.push(prioritization_fees)
-                        }
-                    }
-                    None => {
-                        readlocked_accounts.insert(
-                            readable_account,
-                            AccountData {
-                                key: readable_account.to_string(),
-                                cu_consumed,
-                                cu_requested,
-                                vec_pf: vec![prioritization_fees],
-                            },
-                        );
-                    }
-                }
-            }
+            Self::process_versioned_message(
+                message,
+                &mut prio_fees_in_block,
+                &mut writelocked_accounts,
+                &mut readlocked_accounts,
+                match meta.compute_units_consumed {
+                    solana_transaction_status::option_serializer::OptionSerializer::None => 0,
+                    solana_transaction_status::option_serializer::OptionSerializer::Skip => 0,
+                    solana_transaction_status::option_serializer::OptionSerializer::Some(x) => x,
+                },
+                &mut total_cu_requested,
+                is_vote,
+            );
         }
 
-        let mut heavily_writelocked_accounts = writelocked_accounts
-            .iter()
-            .filter(|(_, account)| account.cu_consumed > 1000000)
-            .map(|(_, data)| AccountUsage::from(data))
-            .collect_vec();
-        heavily_writelocked_accounts.sort_by(|lhs, rhs| rhs.cu_consumed.cmp(&lhs.cu_consumed));
+        let (heavily_writelocked_accounts, heavily_readlocked_accounts) =
+            Self::calculate_account_usage(&writelocked_accounts, &readlocked_accounts);
 
-        let mut heavily_readlocked_accounts: Vec<_> = readlocked_accounts
-            .iter()
-            .filter(|(_, acc)| acc.cu_consumed > 1000000)
-            .map(|(_, data)| AccountUsage::from(data))
-            .collect();
-        heavily_readlocked_accounts.sort_by(|lhs, rhs| rhs.cu_consumed.cmp(&lhs.cu_consumed));
+        let sup_info = Self::calculate_supp_info(&mut prio_fees_in_block);
         Some(BlockInfo {
             block_hash,
             slot: slot as i64,
@@ -510,6 +437,7 @@ impl BlockInfo {
             total_cu_requested: total_cu_requested as i64,
             heavily_writelocked_accounts,
             heavily_readlocked_accounts,
+            sup_info,
         })
     }
 }

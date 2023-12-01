@@ -7,13 +7,20 @@ use anyhow::Context;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use futures::pin_mut;
 use itertools::Itertools;
 use log::{debug, error, info};
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
 use serde::Serialize;
 use solana_sdk::transaction::TransactionError;
-use tokio_postgres::{config::SslMode, tls::MakeTlsConnect, types::ToSql, Client, NoTls, Socket};
+use tokio_postgres::{
+    binary_copy::BinaryCopyInWriter,
+    config::SslMode,
+    tls::MakeTlsConnect,
+    types::{ToSql, Type},
+    Client, CopyInSink, NoTls, Socket,
+};
 
 use crate::{block_info::BlockInfo, transaction_info::TransactionInfo};
 
@@ -83,7 +90,7 @@ impl PostgresSession {
         Ok(client)
     }
 
-    pub fn multiline_query(query: &mut String, args: usize, rows: usize, types: &[&str]) {
+    pub fn _multiline_query(query: &mut String, args: usize, rows: usize, types: &[&str]) {
         let mut arg_index = 1usize;
         for row in 0..rows {
             query.push('(');
@@ -117,10 +124,33 @@ impl PostgresSession {
         }
         const NUMBER_OF_ARGS: usize = 10;
 
-        let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS * txs.len());
         let txs: Vec<PostgresTransactionInfo> =
             txs.iter().map(PostgresTransactionInfo::from).collect();
+
+        let statement = r#"
+                COPY banking_stage_results.transaction_infos(
+                    signature, errors, is_executed, is_confirmed, first_notification_slot, cu_requested, prioritization_fees, utc_timestamp, accounts_used, processed_slot
+                ) FROM STDIN BINARY
+            "#;
+        let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement).await.unwrap();
+        let writer = BinaryCopyInWriter::new(
+            sink,
+            &[
+                Type::TEXT,
+                Type::TEXT,
+                Type::BOOL,
+                Type::BOOL,
+                Type::INT8,
+                Type::INT8,
+                Type::INT8,
+                Type::TIMESTAMPTZ,
+                Type::TEXT,
+                Type::INT8,
+            ],
+        );
+        pin_mut!(writer);
         for tx in txs.iter() {
+            let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS);
             args.push(&tx.signature);
             args.push(&tx.errors);
             args.push(&tx.is_executed);
@@ -131,24 +161,24 @@ impl PostgresSession {
             args.push(&tx.utc_timestamp);
             args.push(&tx.accounts_used);
             args.push(&tx.processed_slot);
+
+            writer.as_mut().write(&args).await.unwrap();
         }
-
-        let mut query = String::from(
-            r#"
-                INSERT INTO banking_stage_results.transaction_infos 
-                (signature, errors, is_executed, is_confirmed, first_notification_slot, cu_requested, prioritization_fees, utc_timestamp, accounts_used, processed_slot)
-                VALUES
-            "#,
-        );
-
-        Self::multiline_query(&mut query, NUMBER_OF_ARGS, txs.len(), &[]);
-        self.client.execute(&query, &args).await?;
-
+        writer.finish().await.unwrap();
         Ok(())
     }
 
+    pub async fn copy_in(
+        &self,
+        statement: &str,
+    ) -> Result<CopyInSink<bytes::Bytes>, tokio_postgres::error::Error> {
+        // BinaryCopyInWriter
+        // https://github.com/sfackler/rust-postgres/blob/master/tokio-postgres/tests/test/binary_copy.rs
+        self.client.copy_in(statement).await
+    }
+
     pub async fn save_block(&self, block_info: BlockInfo) -> anyhow::Result<()> {
-        const NUMBER_OF_ARGS: usize = 10;
+        const NUMBER_OF_ARGS: usize = 11;
         let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS);
         args.push(&block_info.block_hash);
         args.push(&block_info.slot);
@@ -165,17 +195,34 @@ impl PostgresSession {
         args.push(&heavily_writelocked_accounts);
         args.push(&heavily_readlocked_accounts);
 
-        let mut query = String::from(
-            r#"
-                INSERT INTO banking_stage_results.blocks 
-                (block_hash, slot, leader_identity, successful_transactions, banking_stage_errors, processed_transactions, total_cu_used, total_cu_requested, heavily_writelocked_accounts, heavily_readlocked_accounts)
-                VALUES
-            "#,
+        let supp_infos = serde_json::to_string(&block_info.sup_info).unwrap_or_default();
+        args.push(&supp_infos);
+
+        let statement = r#"
+                COPY banking_stage_results.blocks(
+                    block_hash, slot, leader_identity, successful_transactions, banking_stage_errors, processed_transactions, total_cu_used, total_cu_requested, heavily_writelocked_accounts, heavily_readlocked_accounts, supp_infos
+                ) FROM STDIN BINARY
+            "#;
+        let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement).await.unwrap();
+        let writer = BinaryCopyInWriter::new(
+            sink,
+            &[
+                Type::TEXT,
+                Type::INT8,
+                Type::TEXT,
+                Type::INT8,
+                Type::INT8,
+                Type::INT8,
+                Type::INT8,
+                Type::INT8,
+                Type::TEXT,
+                Type::TEXT,
+                Type::TEXT,
+            ],
         );
-
-        Self::multiline_query(&mut query, NUMBER_OF_ARGS, 1, &[]);
-        self.client.execute(&query, &args).await?;
-
+        pin_mut!(writer);
+        writer.as_mut().write(&args).await.unwrap();
+        writer.finish().await.unwrap();
         Ok(())
     }
 }

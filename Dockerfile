@@ -20,4 +20,4 @@ FROM debian:bullseye-slim as run
 RUN apt-get update && apt-get -y install ca-certificates libc6
 COPY --from=build /app/target/release/grpc_banking_transactions_notifications /usr/local/bin/
 
-CMD grpc_banking_transactions_notifications --grpc-address-to-fetch-blocks "$GEYSER_GRPC_ADDRESS" --rpc-url "$RPC_URL"
+CMD grpc_banking_transactions_notifications --grpc-address-to-fetch-blocks "$GEYSER_GRPC_ADDRESS"
