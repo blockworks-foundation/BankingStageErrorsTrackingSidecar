@@ -82,7 +82,8 @@ impl PostgresSession {
 
             if let Err(err) = connection.await {
                 error!("Connection to Postgres broke {err:?}");
-                return;
+                // should restart the side car / currently no way around it
+                panic!("Connection to Postgres broke {err:?}");
             }
             unreachable!("Postgres thread returned")
         });
