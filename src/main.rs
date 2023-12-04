@@ -132,7 +132,7 @@ pub async fn start_tracking_banking_stage_errors(
             )
             .await
             .unwrap();
-
+        log::info!("started geyser banking stage subscription");
         while let Some(message) = geyser_stream.next().await {
             let Ok(message) = message else {
             continue;
@@ -143,6 +143,9 @@ pub async fn start_tracking_banking_stage_errors(
             };
 
             if let yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof::BankingTransactionErrors(transaction) = update {
+                    if transaction.error.is_none() && transaction.accounts.is_empty() {
+                        continue;
+                    }
                     BANKING_STAGE_ERROR_EVENT_COUNT.inc();
                     let sig = transaction.signature.to_string();
                     match slot_by_errors.get_mut(&transaction.slot) {
