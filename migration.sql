@@ -1,7 +1,7 @@
 CREATE SCHEMA banking_stage_results;
 
 CREATE TABLE banking_stage_results.transaction_infos (
-  signature CHAR(88) PRIMARY KEY,
+  signature CHAR(88),
   first_notification_slot BIGINT NOT NULL,
   errors text,
   is_executed BOOL,

@@ -95,7 +95,7 @@ pub async fn start_tracking_banking_stage_errors(
 
             match update{
                 yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof::BankingTransactionErrors(transaction) => {
-                    if transaction.error.is_none() && transaction.accounts.is_empty() {
+                    if transaction.error.is_none() {
                         continue;
                     }
                     BANKING_STAGE_ERROR_EVENT_COUNT.inc();
