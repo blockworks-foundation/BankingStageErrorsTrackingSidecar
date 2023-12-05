@@ -118,7 +118,7 @@ impl PostgresSession {
 
     pub async fn save_banking_transaction_results(
         &self,
-        txs: &[TransactionInfo],
+        txs: Vec<&TransactionInfo>,
     ) -> anyhow::Result<()> {
         if txs.is_empty() {
             return Ok(());
@@ -243,7 +243,7 @@ impl Postgres {
 
     pub fn spawn_transaction_infos_saver(
         &self,
-        map_of_transaction: Arc<DashMap<String, TransactionInfo>>,
+        map_of_transaction: Arc<DashMap<(String, u64), TransactionInfo>>,
         slot: Arc<AtomicU64>,
     ) {
         let session = self.session.clone();
@@ -254,19 +254,17 @@ impl Postgres {
                 let mut txs_to_store = vec![];
                 for tx in map_of_transaction.iter() {
                     if slot > tx.first_notification_slot + 300 {
-                        txs_to_store.push(tx.clone());
+                        txs_to_store.push(tx.key().clone());
                     }
                 }
 
                 if !txs_to_store.is_empty() {
                     debug!("saving transaction infos for {}", txs_to_store.len());
-                    for tx in &txs_to_store {
-                        map_of_transaction.remove(&tx.signature);
-                    }
-                    let batches = txs_to_store.chunks(8).collect_vec();
+                    let data = txs_to_store.iter().filter_map(|key| map_of_transaction.remove(key)).collect_vec();
+                    let batches = data.chunks(8).collect_vec();
                     for batch in batches {
                         session
-                            .save_banking_transaction_results(batch)
+                            .save_banking_transaction_results(batch.iter().map(|(_, tx)| tx).collect_vec())
                             .await
                             .unwrap();
                     }
@@ -306,8 +304,8 @@ pub struct AccountUsed {
     writable: bool,
 }
 
-impl From<&TransactionInfo> for PostgresTransactionInfo {
-    fn from(value: &TransactionInfo) -> Self {
+impl From<&&TransactionInfo> for PostgresTransactionInfo {
+    fn from(value: &&TransactionInfo) -> Self {
         let errors = value
             .errors
             .iter()
