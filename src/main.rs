@@ -14,7 +14,6 @@ use dashmap::DashMap;
 use futures::StreamExt;
 use log::{debug, error};
 use prometheus::{opts, register_int_counter, register_int_gauge, IntCounter, IntGauge};
-use solana_sdk::signature::Signature;
 use transaction_info::TransactionInfo;
 
 mod block_info;
@@ -60,6 +59,7 @@ pub async fn start_tracking_banking_stage_errors(
             String,
             yellowstone_grpc_proto::geyser::SubscribeRequestFilterSlots,
         > = if subscribe_to_slots {
+            log::info!("subscribing to slots on grpc banking errors");
             let mut slot_sub = HashMap::new();
             slot_sub.insert(
                 "slot_sub".to_string(),
@@ -93,12 +93,13 @@ pub async fn start_tracking_banking_stage_errors(
             let Some(update) = message.update_oneof else {
                 continue;
             };
+            log::trace!("got banking stage notification");
 
             match update{
                 yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof::BankingTransactionErrors(transaction) => {
-                    if transaction.error.is_none() {
-                        continue;
-                    }
+                    // if transaction.error.is_none() {
+                    //     continue;
+                    // }
                     BANKING_STAGE_ERROR_EVENT_COUNT.inc();
                     let sig = transaction.signature.to_string();
                     match slot_by_errors.get_mut(&transaction.slot) {
@@ -132,6 +133,7 @@ pub async fn start_tracking_banking_stage_errors(
                     let load_slot = slot.load(std::sync::atomic::Ordering::Relaxed);
                     if load_slot < s.slot {
                         // update slot to process updates
+                        // updated slot
                         slot.store(s.slot, std::sync::atomic::Ordering::Relaxed);
                     }
                 },
@@ -149,8 +151,6 @@ async fn start_tracking_blocks(
     grpc_x_token: Option<String>,
     postgres: postgres::Postgres,
     slot: Arc<AtomicU64>,
-    slot_by_errors: Arc<DashMap<u64, u64>>,
-    map_of_infos: Arc<DashMap<String, BTreeMap<u64, TransactionInfo>>>,
 ) {
     let mut client = yellowstone_grpc_client_original::GeyserGrpcClient::connect(
         grpc_block_addr,
@@ -227,36 +227,16 @@ async fn start_tracking_blocks(
                     BANKING_STAGE_BLOCKS_TASK.inc();
                     let postgres = postgres.clone();
                     let slot = slot.clone();
-                    let map_of_infos = map_of_infos.clone();
-                    let slot_by_errors = slot_by_errors.clone();
                     tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_secs(30)).await;
-                        for transaction in &block.transactions {
-                            let Some(tx) = &transaction.transaction else {
-                                    continue;
-                                };
-                            let signature = Signature::try_from(tx.signatures[0].clone())
-                                .unwrap()
-                                .to_string();
-                            if let Some(mut tree) = map_of_infos.get_mut(&signature) {
-                                for (_, tx_info) in tree.iter_mut() {
-                                    tx_info.add_transaction(transaction, block.slot);
-                                }
-                            }
-                        }
-
-                        let banking_stage_error_count =
-                            slot_by_errors.get(&block.slot).map(|x| *x.value() as i64);
-                        let block_info = BlockInfo::new(&block, banking_stage_error_count);
+                        let block_info = BlockInfo::new(&block);
 
                         TXERROR_COUNT.add(
                             block_info.processed_transactions - block_info.successful_transactions,
                         );
                         if let Err(e) = postgres.save_block_info(block_info).await {
-                            panic!("Error saving block {}", e);
+                            error!("Error saving block {}", e);
                         }
                         slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
-                        slot_by_errors.remove(&block.slot);
                         BANKING_STAGE_BLOCKS_TASK.dec();
                     });
                     // delay queue so that we get all the banking stage errors before processing block
@@ -306,15 +286,7 @@ async fn main() {
         })
         .collect_vec();
     if let Some(gprc_block_addr) = grpc_block_addr {
-        start_tracking_blocks(
-            gprc_block_addr,
-            args.grpc_x_token,
-            postgres,
-            slot,
-            slot_by_errors,
-            map_of_infos,
-        )
-        .await;
+        start_tracking_blocks(gprc_block_addr, args.grpc_x_token, postgres, slot).await;
     }
     futures::future::join_all(jhs).await;
 }
