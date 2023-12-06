@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
@@ -118,7 +119,7 @@ impl PostgresSession {
 
     pub async fn save_banking_transaction_results(
         &self,
-        txs: Vec<&TransactionInfo>,
+        txs: Vec<TransactionInfo>,
     ) -> anyhow::Result<()> {
         if txs.is_empty() {
             return Ok(());
@@ -243,7 +244,7 @@ impl Postgres {
 
     pub fn spawn_transaction_infos_saver(
         &self,
-        map_of_transaction: Arc<DashMap<(String, u64), TransactionInfo>>,
+        map_of_transaction: Arc<DashMap<String, BTreeMap<u64, TransactionInfo>>>,
         slot: Arc<AtomicU64>,
     ) {
         let session = self.session.clone();
@@ -253,18 +254,25 @@ impl Postgres {
                 let slot = slot.load(std::sync::atomic::Ordering::Relaxed);
                 let mut txs_to_store = vec![];
                 for tx in map_of_transaction.iter() {
-                    if slot > tx.first_notification_slot + 300 {
+                    let slot_map = tx.value();
+                    let first_slot = slot_map.keys().next().cloned().unwrap_or_default();
+                    if slot > first_slot + 300 {
                         txs_to_store.push(tx.key().clone());
                     }
                 }
 
                 if !txs_to_store.is_empty() {
                     debug!("saving transaction infos for {}", txs_to_store.len());
-                    let data = txs_to_store.iter().filter_map(|key| map_of_transaction.remove(key)).collect_vec();
+                    let data = txs_to_store
+                        .iter()
+                        .filter_map(|key| map_of_transaction.remove(key))
+                        .map(|(_, tree)| tree.iter().map(|(_, info)| info).cloned().collect_vec())
+                        .flatten()
+                        .collect_vec();
                     let batches = data.chunks(8).collect_vec();
                     for batch in batches {
                         session
-                            .save_banking_transaction_results(batch.iter().map(|(_, tx)| tx).collect_vec())
+                            .save_banking_transaction_results(batch.to_vec())
                             .await
                             .unwrap();
                     }
@@ -304,8 +312,8 @@ pub struct AccountUsed {
     writable: bool,
 }
 
-impl From<&&TransactionInfo> for PostgresTransactionInfo {
-    fn from(value: &&TransactionInfo) -> Self {
+impl From<&TransactionInfo> for PostgresTransactionInfo {
+    fn from(value: &TransactionInfo) -> Self {
         let errors = value
             .errors
             .iter()
