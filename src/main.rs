@@ -110,14 +110,20 @@ pub async fn start_tracking_banking_stage_errors(
                     }
                     match map_of_infos.get_mut(&sig) {
                         Some(mut x) => {
-                            x.value_mut().iter_mut().for_each(|(_, tx_info)| {
-                                tx_info.add_notification(&transaction)
-                            });
+                            let slot_map = x.value_mut();
+                            match slot_map.get_mut(&transaction.slot) {
+                                Some(tx_info) => {
+                                    tx_info.add_notification(&transaction)
+                                },
+                                None => {
+                                    let tx_info = TransactionInfo::new(&transaction);
+                                    slot_map.insert(transaction.slot, tx_info);
+                                }
+                            }
                         }
                         None => {
-                            let mut x = TransactionInfo::new(&transaction);
-                            x.add_notification(&transaction);
-                            map_of_infos.insert(sig, BTreeMap::from([(transaction.slot, x)]));
+                            let tx_info = TransactionInfo::new(&transaction);
+                            map_of_infos.insert(sig, BTreeMap::from([(transaction.slot, tx_info)]));
                         }
                     }
                 },
