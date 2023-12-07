@@ -28,7 +28,6 @@ impl PrioFeeData {
     pub fn new(pf_vec: &Vec<u64>) -> Self {
         let mut vec = pf_vec.clone();
         vec.sort();
-        let mid = vec.len() / 2;
         Self {
             max: vec.last().cloned(),
             min: vec.first().cloned(),

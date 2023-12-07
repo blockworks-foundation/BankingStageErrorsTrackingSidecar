@@ -234,7 +234,7 @@ async fn start_tracking_blocks(
                             block_info.processed_transactions - block_info.successful_transactions,
                         );
                         if let Err(e) = postgres.save_block_info(block_info).await {
-                            error!("Error saving block {}", e);
+                            panic!("Error saving block {}", e);
                         }
                         slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
                         BANKING_STAGE_BLOCKS_TASK.dec();
@@ -244,7 +244,7 @@ async fn start_tracking_blocks(
                 _ => {}
             };
         }
-        log::error!("stopping the sidecar, geyser block stream is broken");
+        log::error!("geyser block stream is broken, retrying");
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }

@@ -216,7 +216,7 @@ impl PostgresSession {
         "#,
             temp_table
         );
-        self.client.execute(statement.as_str(), &[]).await.unwrap();
+        self.client.execute(statement.as_str(), &[]).await?;
         self.drop_temp_table(temp_table).await?;
         Ok(())
     }
@@ -233,7 +233,7 @@ impl PostgresSession {
                     "CREATE TEMP TABLE {}(
             sig char(88),
             slot BIGINT,
-            error INT,
+            error_code INT,
             count INT,
             utc_timestamp TIMESTAMP
         );",
@@ -247,7 +247,7 @@ impl PostgresSession {
         let statement = format!(
             r#"
             COPY {}(
-                sig, slot, error, count, utc_timestamp
+                sig, slot, error_code, count, utc_timestamp
             ) FROM STDIN BINARY
         "#,
             temp_table
@@ -267,13 +267,13 @@ impl PostgresSession {
         for tx in txs {
             let slot: i64 = tx.slot as i64;
             for (error, count) in &tx.errors {
-                let error = error.to_int();
+                let error_code = error.to_int();
                 let count = *count as i32;
                 let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(5);
                 let timestamp = tx.utc_timestamp.naive_local();
                 args.push(&tx.signature);
                 args.push(&slot);
-                args.push(&error);
+                args.push(&error_code);
                 args.push(&count);
                 args.push(&timestamp);
 
@@ -284,12 +284,12 @@ impl PostgresSession {
 
         let statement = format!(
             r#"
-            INSERT INTO banking_stage_results_2.transaction_slot(transaction_id, slot, error, count, utc_timestamp)
-                SELECT ( select transaction_id from banking_stage_results_2.transactions where signature = t.sig ), t.slot, t.error, t.count, t.utc_timestamp
+            INSERT INTO banking_stage_results_2.transaction_slot(transaction_id, slot, error_code, count, utc_timestamp)
+                SELECT ( select transaction_id from banking_stage_results_2.transactions where signature = t.sig ), t.slot, t.error_code, t.count, t.utc_timestamp
                 FROM (
-                    SELECT sig, slot, error, count, utc_timestamp from {}
+                    SELECT sig, slot, error_code, count, utc_timestamp from {}
                 )
-                as t (sig, slot, error, count, utc_timestamp) ON CONFLICT DO NOTHING;
+                as t (sig, slot, error_code, count, utc_timestamp) ON CONFLICT DO NOTHING;
         "#,
             temp_table
         );
@@ -333,7 +333,7 @@ impl PostgresSession {
             BinaryCopyInWriter::new(sink, &[Type::TEXT, Type::TEXT, Type::BOOL, Type::BOOL]);
         pin_mut!(writer);
         for acc_tx in accounts_for_transaction {
-            for acc in acc_tx.accounts {
+            for acc in &acc_tx.accounts {
                 let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(4);
                 args.push(&acc.key);
                 args.push(&acc_tx.signature);
@@ -348,8 +348,8 @@ impl PostgresSession {
             r#"
             INSERT INTO banking_stage_results_2.accounts_map_transaction(acc_id, transaction_id, is_writable, is_signer)
                 SELECT 
-                    ( select acc_id from banking_stage_results_2.accounts where account_key == t.account_key ),
-                    ( select transaction_id from banking_stage_results_2.transactions where signature = t.sig ),
+                    ( select acc_id from banking_stage_results_2.accounts where account_key = t.account_key ),
+                    ( select transaction_id from banking_stage_results_2.transactions where signature = t.signature ),
                     t.is_writable,
                     t.is_signer
                 FROM (
@@ -376,7 +376,7 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            signature text,
+            signature char(88),
             processed_slot BIGINT,
             is_successful BOOL,
             cu_requested BIGINT,
@@ -459,13 +459,13 @@ impl PostgresSession {
         Ok(())
     }
 
-    pub async fn save_account_usage_in_block(&self, block_info: BlockInfo) -> anyhow::Result<()> {
+    pub async fn save_account_usage_in_block(&self, block_info: &BlockInfo) -> anyhow::Result<()> {
         let temp_table = self.temp_table_tracker.get_new_temp_table();
         self.client
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            account_key text,
+            account_key CHAR(44),
             slot BIGINT,
             is_write_locked BOOL,
             total_cu_requested BIGINT,
@@ -507,9 +507,9 @@ impl PostgresSession {
         );
         pin_mut!(writer);
         for account_usage in block_info.heavily_locked_accounts.iter() {
-            let is_writable = true;
+            let is_writable = account_usage.is_write_locked;
             let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(6);
-            let pf_json = serde_json::to_string(&account_usage.prioritization_fee_data).unwrap();
+            let pf_json = serde_json::to_string(&account_usage.prioritization_fee_data)?;
             args.push(&account_usage.key);
             args.push(&block_info.slot);
             args.push(&is_writable);
@@ -562,6 +562,37 @@ impl PostgresSession {
         Ok(())
     }
 
+    pub async fn save_block_info(&self, block_info: &BlockInfo) -> anyhow::Result<()> {
+        let statement = r#"
+            INSERT INTO banking_stage_results_2.blocks (
+                slot,
+                block_hash,
+                leader_identity,
+                successful_transactions,
+                processed_transactions,
+                total_cu_used,
+                total_cu_requested,
+                supp_infos
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+            "#;
+        self.client
+            .execute(
+                statement,
+                &[
+                    &block_info.slot,
+                    &block_info.block_hash,
+                    &block_info.leader_identity.clone().unwrap_or_default(),
+                    &block_info.successful_transactions,
+                    &block_info.processed_transactions,
+                    &block_info.total_cu_used,
+                    &block_info.total_cu_requested,
+                    &serde_json::to_string(&block_info.sup_info)?,
+                ],
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn save_banking_transaction_results(
         &self,
         txs: Vec<TransactionInfo>,
@@ -600,7 +631,7 @@ impl PostgresSession {
                     })
                     .collect(),
             })
-            .collect();
+            .collect_vec();
         // insert accounts for transaction
         self.insert_accounts_for_transaction(txs_accounts).await?;
         Ok(())
@@ -646,8 +677,7 @@ impl PostgresSession {
                     })
                     .collect(),
             })
-            .collect();
-        // insert accounts for transaction
+            .collect_vec();
         self.insert_accounts_for_transaction(txs_accounts).await?;
 
         // save transactions in block
@@ -655,6 +685,8 @@ impl PostgresSession {
             .await?;
 
         // save account usage in blocks
+        self.save_account_usage_in_block(&block_info).await?;
+        self.save_block_info(&block_info).await?;
         Ok(())
     }
 }
@@ -699,14 +731,13 @@ impl Postgres {
                         .map(|(_, tree)| tree.iter().map(|(_, info)| info).cloned().collect_vec())
                         .flatten()
                         .collect_vec();
-                    println!("saving {} transaction infos", data.len());
-                    let batches = data.chunks(256).collect_vec();
+                    let batches = data.chunks(1024).collect_vec();
                     for batch in batches {
-                        if let Err(e) = session
+                        if let Err(err) = session
                             .save_banking_transaction_results(batch.to_vec())
                             .await
                         {
-                            panic!("saving transaction infos failed {}", e);
+                            panic!("Error saving transaction infos {}", err);
                         }
                     }
                 }

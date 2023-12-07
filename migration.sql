@@ -16,13 +16,18 @@ CREATE TABLE banking_stage_results_2.transaction_infos (
   supp_infos text
 );
 
+CREATE TABLE banking_stage_results_2.errors (
+  error_code int primary key,
+  error_text text
+);
+
 CREATE TABLE banking_stage_results_2.transaction_slot (
   transaction_id BIGINT,
-  slot BIGINT NOT NULL,
-  error INT,
+  slot BIGINT,
+  error_code INT REFERENCES errors(error_code),
   count INT,
   utc_timestamp TIMESTAMP NOT NULL,
-  PRIMARY KEY (transaction_id, slot, error)
+  PRIMARY KEY (transaction_id, slot, error_code)
 );
 
 CREATE INDEX idx_transaction_slot_timestamp ON banking_stage_results_2.transaction_slot(utc_timestamp);
@@ -32,7 +37,6 @@ CREATE TABLE banking_stage_results_2.blocks (
   block_hash CHAR(44),
   leader_identity CHAR(44),
   successful_transactions BIGINT,
-  banking_stage_errors BIGINT,
   processed_transactions BIGINT,
   total_cu_used BIGINT,
   total_cu_requested BIGINT,
@@ -45,8 +49,6 @@ CREATE TABLE banking_stage_results_2.accounts(
 	UNIQUE (account_key)
 );
 
-CREATE INDEX idx_account_key ON banking_stage_results_2.accounts(account_key);
-
 CREATE TABLE banking_stage_results_2.accounts_map_transaction(
   acc_id BIGINT,
   transaction_id BIGINT,
@@ -54,6 +56,9 @@ CREATE TABLE banking_stage_results_2.accounts_map_transaction(
   is_signer BOOL,
   PRIMARY KEY (acc_id, transaction_id)
 );
+
+CREATE INDEX accounts_map_transaction_acc_id ON banking_stage_results_2.accounts_map_transaction(acc_id);
+CREATE INDEX accounts_map_transaction_transaction_id ON banking_stage_results_2.accounts_map_transaction(transaction_id);
 
 CREATE TABLE banking_stage_results_2.accounts_map_blocks (
   acc_id BIGINT,
@@ -63,53 +68,47 @@ CREATE TABLE banking_stage_results_2.accounts_map_blocks (
   total_cu_requested BIGINT,
   prioritization_fees_info text,
   supp_infos text,
-  PRIMARY KEY (acc_id, slot, is_writable)
+  PRIMARY KEY (acc_id, slot, is_write_locked)
 );
 
-CREATE TABLE banking_stage_results_2.errors (
-  error_code int primary key,
-  error text
-);
+insert into banking_stage_results_2.errors (error_text, error_code) VALUES 
+        ('AccountBorrowOutstanding', 0),
+        ('AccountInUse', 1),
+        ('AccountLoadedTwice', 2),
+        ('AccountNotFound', 3),
+        ('AddressLookupTableNotFound', 4),
+        ('AlreadyProcessed', 5),
+        ('BlockhashNotFound', 6),
+        ('CallChainTooDeep', 7),
+        ('ClusterMaintenance', 8),
+        ('DuplicateInstruction', 9),
+        ('InstructionError', 10),
+        ('InsufficientFundsForFee', 11),
+        ('InsufficientFundsForRent', 12),
+        ('InvalidAccountForFee', 13),
+        ('InvalidAccountIndex', 14),
+        ('InvalidAddressLookupTableData', 15),
+        ('InvalidAddressLookupTableIndex', 16),
+        ('InvalidAddressLookupTableOwner', 17),
+        ('InvalidLoadedAccountsDataSizeLimit', 18),
+        ('InvalidProgramForExecution', 19),
+        ('InvalidRentPayingAccount', 20),
+        ('InvalidWritableAccount', 21),
+        ('MaxLoadedAccountsDataSizeExceeded', 22),
+        ('MissingSignatureForFee', 23),
+        ('ProgramAccountNotFound', 24),
+        ('ResanitizationNeeded', 25),
+        ('SanitizeFailure', 26),
+        ('SignatureFailure', 27),
+        ('TooManyAccountLocks', 28),
+        ('UnbalancedTransaction', 29),
+        ('UnsupportedVersion', 30),
+        ('WouldExceedAccountDataBlockLimit', 31),
+        ('WouldExceedAccountDataTotalLimit', 32),
+        ('WouldExceedMaxAccountCostLimit', 33),
+        ('WouldExceedMaxBlockCostLimit', 34),
+        ('WouldExceedMaxVoteCostLimit', 35);
 
-insert into banking_stage_results_2.errors (error, error_code) VALUES 
-        ('TransactionError::AccountBorrowOutstanding', 0),
-        ('TransactionError::AccountInUse', 1),
-        ('TransactionError::AccountLoadedTwice', 2),
-        ('TransactionError::AccountNotFound', 3),
-        ('TransactionError::AddressLookupTableNotFound', 4),
-        ('TransactionError::AlreadyProcessed', 5),
-        ('TransactionError::BlockhashNotFound', 6),
-        ('TransactionError::CallChainTooDeep', 7),
-        ('TransactionError::ClusterMaintenance', 8),
-        ('TransactionError::DuplicateInstruction', 9),
-        ('TransactionError::InstructionError', 10),
-        ('TransactionError::InsufficientFundsForFee', 11),
-        ('TransactionError::InsufficientFundsForRent', 12),
-        ('TransactionError::InvalidAccountForFee', 13),
-        ('TransactionError::InvalidAccountIndex', 14),
-        ('TransactionError::InvalidAddressLookupTableData', 15),
-        ('TransactionError::InvalidAddressLookupTableIndex', 16),
-        ('TransactionError::InvalidAddressLookupTableOwner', 17),
-        ('TransactionError::InvalidLoadedAccountsDataSizeLimit', 18),
-        ('TransactionError::InvalidProgramForExecution', 19),
-        ('TransactionError::InvalidRentPayingAccount', 20),
-        ('TransactionError::InvalidWritableAccount', 21),
-        ('TransactionError::MaxLoadedAccountsDataSizeExceeded', 22),
-        ('TransactionError::MissingSignatureForFee', 23),
-        ('TransactionError::ProgramAccountNotFound', 24),
-        ('TransactionError::ResanitizationNeeded', 25),
-        ('TransactionError::SanitizeFailure', 26),
-        ('TransactionError::SignatureFailure', 27),
-        ('TransactionError::TooManyAccountLocks', 28),
-        ('TransactionError::UnbalancedTransaction', 29),
-        ('TransactionError::UnsupportedVersion', 30),
-        ('TransactionError::WouldExceedAccountDataBlockLimit', 31),
-        ('TransactionError::WouldExceedAccountDataTotalLimit', 32),
-        ('TransactionError::WouldExceedMaxAccountCostLimit', 33),
-        ('TransactionError::WouldExceedMaxBlockCostLimit', 34),
-        ('TransactionError::WouldExceedMaxVoteCostLimit', 35);
-
--- optional
 CLUSTER banking_stage_results_2.blocks using blocks_pkey;
 VACUUM FULL banking_stage_results_2.blocks;
 -- optional
