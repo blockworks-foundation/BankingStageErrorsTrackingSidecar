@@ -134,7 +134,7 @@ impl PostgresSession {
                     signature, errors, is_executed, is_confirmed, first_notification_slot, cu_requested, prioritization_fees, utc_timestamp, accounts_used, processed_slot
                 ) FROM STDIN BINARY
             "#;
-        let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement).await.unwrap();
+        let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement).await?;
         let writer = BinaryCopyInWriter::new(
             sink,
             &[
@@ -164,9 +164,9 @@ impl PostgresSession {
             args.push(&tx.accounts_used);
             args.push(&tx.processed_slot);
 
-            writer.as_mut().write(&args).await.unwrap();
+            writer.as_mut().write(&args).await?;
         }
-        writer.finish().await.unwrap();
+        writer.finish().await?;
         Ok(())
     }
 
@@ -223,8 +223,8 @@ impl PostgresSession {
             ],
         );
         pin_mut!(writer);
-        writer.as_mut().write(&args).await.unwrap();
-        writer.finish().await.unwrap();
+        writer.as_mut().write(&args).await?;
+        writer.finish().await?;
         Ok(())
     }
 }
@@ -269,12 +269,13 @@ impl Postgres {
                         .map(|(_, tree)| tree.iter().map(|(_, info)| info).cloned().collect_vec())
                         .flatten()
                         .collect_vec();
-                    let batches = data.chunks(8).collect_vec();
+                    let batches = data.chunks(32).collect_vec();
                     for batch in batches {
-                        session
+                        if let Err(e) = session
                             .save_banking_transaction_results(batch.to_vec())
-                            .await
-                            .unwrap();
+                            .await {
+                                panic!("saving transaction infos failed {}", e);
+                            }
                     }
                 }
             }
