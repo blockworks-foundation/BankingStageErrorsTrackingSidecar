@@ -273,9 +273,10 @@ impl Postgres {
                     for batch in batches {
                         if let Err(e) = session
                             .save_banking_transaction_results(batch.to_vec())
-                            .await {
-                                panic!("saving transaction infos failed {}", e);
-                            }
+                            .await
+                        {
+                            panic!("saving transaction infos failed {}", e);
+                        }
                     }
                 }
             }

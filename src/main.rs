@@ -134,7 +134,9 @@ pub async fn start_tracking_banking_stage_errors(
                         slot.store(s.slot, std::sync::atomic::Ordering::Relaxed);
                     }
                 },
-                _=>{}
+                _=>{
+                    break;
+                }
             }
         }
         error!("geyser banking stage connection failed {}", grpc_address);
@@ -244,7 +246,9 @@ async fn start_tracking_blocks(
                     });
                     // delay queue so that we get all the banking stage errors before processing block
                 }
-                _ => {}
+                _ => {
+                    break;
+                }
             };
         }
         log::error!("stopping the sidecar, geyser block stream is broken");
