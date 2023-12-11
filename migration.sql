@@ -70,6 +70,7 @@ CREATE TABLE banking_stage_results_2.accounts_map_blocks (
   supp_infos text,
   PRIMARY KEY (acc_id, slot, is_write_locked)
 );
+CREATE INDEX idx_accounts_map_blocks_slot ON banking_stage_results_2.accounts_map_blocks(slot);
 
 insert into banking_stage_results_2.errors (error_text, error_code) VALUES 
         ('AccountBorrowOutstanding', 0),
