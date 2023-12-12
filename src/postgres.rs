@@ -736,7 +736,7 @@ impl Postgres {
                         if let Err(err) = session
                             .save_banking_transaction_results(batch.to_vec())
                             .await {
-                                panic!("saving transaction infos failed {}", e);
+                                panic!("saving transaction infos failed {}", err);
                             }
                     }
                 }
