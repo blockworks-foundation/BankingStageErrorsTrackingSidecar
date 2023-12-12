@@ -6,7 +6,6 @@ use std::{
 
 use anyhow::Context;
 use base64::Engine;
-use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use futures::pin_mut;
 use itertools::Itertools;
@@ -23,10 +22,34 @@ use tokio_postgres::{
     Client, CopyInSink, NoTls, Socket,
 };
 
-use crate::{block_info::BlockInfo, transaction_info::TransactionInfo};
+use crate::{
+    block_info::{BlockInfo, BlockTransactionInfo},
+    transaction_info::TransactionInfo,
+};
+
+pub struct TempTableTracker {
+    count: AtomicU64,
+}
+
+impl TempTableTracker {
+    pub fn new() -> Self {
+        Self {
+            count: AtomicU64::new(1),
+        }
+    }
+
+    pub fn get_new_temp_table(&self) -> String {
+        format!(
+            "temp_table_{}",
+            self.count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        )
+    }
+}
 
 pub struct PostgresSession {
     client: Client,
+    temp_table_tracker: TempTableTracker,
 }
 
 impl PostgresSession {
@@ -62,7 +85,10 @@ impl PostgresSession {
             Self::spawn_connection(pg_config, MakeTlsConnector::new(connector)).await?
         };
 
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            temp_table_tracker: TempTableTracker::new(),
+        })
     }
 
     async fn spawn_connection<T>(
@@ -92,29 +118,479 @@ impl PostgresSession {
         Ok(client)
     }
 
-    pub fn _multiline_query(query: &mut String, args: usize, rows: usize, types: &[&str]) {
-        let mut arg_index = 1usize;
-        for row in 0..rows {
-            query.push('(');
+    pub async fn drop_temp_table(&self, table: String) -> anyhow::Result<()> {
+        self.client
+            .execute(format!("drop table if exists {};", table).as_str(), &[])
+            .await?;
+        Ok(())
+    }
 
-            for i in 0..args {
-                if row == 0 && !types.is_empty() {
-                    query.push_str(&format!("(${arg_index})::{}", types[i]));
-                } else {
-                    query.push_str(&format!("${arg_index}"));
-                }
-                arg_index += 1;
-                if i != (args - 1) {
-                    query.push(',');
-                }
-            }
+    pub async fn create_transaction_ids(&self, signatures: Vec<String>) -> anyhow::Result<()> {
+        // create temp table
+        let temp_table = self.temp_table_tracker.get_new_temp_table();
 
-            query.push(')');
+        self.client
+            .execute(
+                format!(
+                    r#"
+        CREATE TEMP TABLE {}(
+            signature char(88)
+        );
+        "#,
+                    temp_table
+                )
+                .as_str(),
+                &[],
+            )
+            .await?;
 
-            if row != (rows - 1) {
-                query.push(',');
+        let statement = format!(
+            r#"
+            COPY {}(
+                signature
+            ) FROM STDIN BINARY
+        "#,
+            temp_table
+        );
+        let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement.as_str()).await?;
+        let writer = BinaryCopyInWriter::new(sink, &[Type::TEXT]);
+        pin_mut!(writer);
+        for signature in signatures {
+            writer.as_mut().write(&[&signature]).await?;
+        }
+        writer.finish().await?;
+
+        let statement = format!(
+            r#"
+        INSERT INTO banking_stage_results_2.transactions(signature) SELECT signature from {}
+        ON CONFLICT DO NOTHING;
+        "#,
+            temp_table
+        );
+        self.client.execute(statement.as_str(), &[]).await?;
+
+        self.drop_temp_table(temp_table).await?;
+        Ok(())
+    }
+
+    pub async fn create_accounts_for_transaction(
+        &self,
+        accounts: Vec<String>,
+    ) -> anyhow::Result<()> {
+        // create temp table
+        let temp_table = self.temp_table_tracker.get_new_temp_table();
+
+        self.client
+            .execute(
+                format!(
+                    "CREATE TEMP TABLE {}(
+            key char(44)
+        );",
+                    temp_table
+                )
+                .as_str(),
+                &[],
+            )
+            .await?;
+
+        let statement = format!(
+            r#"
+            COPY {}(
+                key
+            ) FROM STDIN BINARY
+        "#,
+            temp_table
+        );
+        let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement.as_str()).await?;
+        let writer = BinaryCopyInWriter::new(sink, &[Type::TEXT]);
+        pin_mut!(writer);
+        for account in accounts {
+            writer.as_mut().write(&[&account]).await?;
+        }
+        writer.finish().await?;
+
+        let statement = format!(
+            r#"
+        INSERT INTO banking_stage_results_2.accounts(account_key) SELECT key from {}
+        ON CONFLICT DO NOTHING;
+        "#,
+            temp_table
+        );
+        self.client.execute(statement.as_str(), &[]).await?;
+        self.drop_temp_table(temp_table).await?;
+        Ok(())
+    }
+
+    pub async fn insert_transaction_in_txslot_table(
+        &self,
+        txs: &[TransactionInfo],
+    ) -> anyhow::Result<()> {
+        let temp_table = self.temp_table_tracker.get_new_temp_table();
+
+        self.client
+            .execute(
+                format!(
+                    "CREATE TEMP TABLE {}(
+            sig char(88),
+            slot BIGINT,
+            error_code INT,
+            count INT,
+            utc_timestamp TIMESTAMP
+        );",
+                    temp_table
+                )
+                .as_str(),
+                &[],
+            )
+            .await?;
+
+        let statement = format!(
+            r#"
+            COPY {}(
+                sig, slot, error_code, count, utc_timestamp
+            ) FROM STDIN BINARY
+        "#,
+            temp_table
+        );
+        let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement.as_str()).await?;
+        let writer = BinaryCopyInWriter::new(
+            sink,
+            &[
+                Type::TEXT,
+                Type::INT8,
+                Type::INT4,
+                Type::INT4,
+                Type::TIMESTAMP,
+            ],
+        );
+        pin_mut!(writer);
+        for tx in txs {
+            let slot: i64 = tx.slot as i64;
+            for (error, count) in &tx.errors {
+                let error_code = error.to_int();
+                let count = *count as i32;
+                let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(5);
+                let timestamp = tx.utc_timestamp.naive_local();
+                args.push(&tx.signature);
+                args.push(&slot);
+                args.push(&error_code);
+                args.push(&count);
+                args.push(&timestamp);
+
+                writer.as_mut().write(&args).await?;
             }
         }
+        writer.finish().await?;
+
+        let statement = format!(
+            r#"
+            INSERT INTO banking_stage_results_2.transaction_slot(transaction_id, slot, error_code, count, utc_timestamp)
+                SELECT ( select transaction_id from banking_stage_results_2.transactions where signature = t.sig ), t.slot, t.error_code, t.count, t.utc_timestamp
+                FROM (
+                    SELECT sig, slot, error_code, count, utc_timestamp from {}
+                )
+                as t (sig, slot, error_code, count, utc_timestamp) ON CONFLICT DO NOTHING;
+        "#,
+            temp_table
+        );
+        self.client.execute(statement.as_str(), &[]).await?;
+        self.drop_temp_table(temp_table).await?;
+        Ok(())
+    }
+
+    pub async fn insert_accounts_for_transaction(
+        &self,
+        accounts_for_transaction: Vec<AccountsForTransaction>,
+    ) -> anyhow::Result<()> {
+        let temp_table = self.temp_table_tracker.get_new_temp_table();
+        self.client
+            .execute(
+                format!(
+                    "CREATE TEMP TABLE {}(
+            account_key char(44),
+            signature char(88),
+            is_writable BOOL,
+            is_signer BOOL
+        );",
+                    temp_table
+                )
+                .as_str(),
+                &[],
+            )
+            .await?;
+
+        let statement = format!(
+            r#"
+            COPY {}(
+                account_key, signature, is_writable, is_signer
+            ) FROM STDIN BINARY
+        "#,
+            temp_table
+        );
+
+        let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement.as_str()).await?;
+        let writer =
+            BinaryCopyInWriter::new(sink, &[Type::TEXT, Type::TEXT, Type::BOOL, Type::BOOL]);
+        pin_mut!(writer);
+        for acc_tx in accounts_for_transaction {
+            for acc in &acc_tx.accounts {
+                let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(4);
+                args.push(&acc.key);
+                args.push(&acc_tx.signature);
+                args.push(&acc.writable);
+                args.push(&acc.is_signer);
+                writer.as_mut().write(&args).await?;
+            }
+        }
+        writer.finish().await?;
+
+        let statement = format!(
+            r#"
+            INSERT INTO banking_stage_results_2.accounts_map_transaction(acc_id, transaction_id, is_writable, is_signer)
+                SELECT 
+                    ( select acc_id from banking_stage_results_2.accounts where account_key = t.account_key ),
+                    ( select transaction_id from banking_stage_results_2.transactions where signature = t.signature ),
+                    t.is_writable,
+                    t.is_signer
+                FROM (
+                    SELECT account_key, signature, is_writable, is_signer from {}
+                )
+                as t (account_key, signature, is_writable, is_signer)
+                ON CONFLICT DO NOTHING;
+        "#,
+            temp_table
+        );
+        self.client.execute(statement.as_str(), &[]).await?;
+
+        self.drop_temp_table(temp_table).await?;
+        Ok(())
+    }
+
+    pub async fn insert_transactions_for_block(
+        &self,
+        transactions: &Vec<BlockTransactionInfo>,
+        slot: i64,
+    ) -> anyhow::Result<()> {
+        let temp_table = self.temp_table_tracker.get_new_temp_table();
+        self.client
+            .execute(
+                format!(
+                    "CREATE TEMP TABLE {}(
+            signature char(88),
+            processed_slot BIGINT,
+            is_successful BOOL,
+            cu_requested BIGINT,
+            cu_consumed BIGINT,
+            prioritization_fees BIGINT,
+            supp_infos text
+        );",
+                    temp_table
+                )
+                .as_str(),
+                &[],
+            )
+            .await?;
+
+        let statement = format!(
+            r#"
+            COPY {}(
+                signature,
+                processed_slot,
+                is_successful,
+                cu_requested,
+                cu_consumed,
+                prioritization_fees,
+                supp_infos
+            ) FROM STDIN BINARY
+        "#,
+            temp_table
+        );
+
+        let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement.as_str()).await?;
+        let writer = BinaryCopyInWriter::new(
+            sink,
+            &[
+                Type::TEXT,
+                Type::INT8,
+                Type::BOOL,
+                Type::INT8,
+                Type::INT8,
+                Type::INT8,
+                Type::TEXT,
+            ],
+        );
+        pin_mut!(writer);
+        for transaction in transactions {
+            let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(7);
+            args.push(&transaction.signature);
+            args.push(&slot);
+            args.push(&transaction.is_successful);
+            args.push(&transaction.cu_requested);
+            args.push(&transaction.cu_consumed);
+            args.push(&transaction.prioritization_fees);
+            args.push(&transaction.supp_infos);
+            writer.as_mut().write(&args).await?;
+        }
+        writer.finish().await?;
+
+        let statement = format!(
+            r#"
+            INSERT INTO banking_stage_results_2.transaction_infos
+            (transaction_id, processed_slot, is_successful, cu_requested, cu_consumed, prioritization_fees, supp_infos)
+                SELECT 
+                    ( select transaction_id from banking_stage_results_2.transactions where signature = t.signature ),
+                    t.processed_slot,
+                    t.is_successful,
+                    t.cu_requested,
+                    t.cu_consumed,
+                    t.prioritization_fees,
+                    t.supp_infos
+                FROM (
+                    SELECT signature, processed_slot, is_successful, cu_requested, cu_consumed, prioritization_fees, supp_infos from {}
+                )
+                as t (signature, processed_slot, is_successful, cu_requested, cu_consumed, prioritization_fees, supp_infos)
+                ON CONFLICT DO NOTHING;
+        "#,
+            temp_table
+        );
+        self.client.execute(statement.as_str(), &[]).await?;
+
+        self.drop_temp_table(temp_table).await?;
+        Ok(())
+    }
+
+    pub async fn save_account_usage_in_block(&self, block_info: &BlockInfo) -> anyhow::Result<()> {
+        let temp_table = self.temp_table_tracker.get_new_temp_table();
+        self.client
+            .execute(
+                format!(
+                    "CREATE TEMP TABLE {}(
+            account_key CHAR(44),
+            slot BIGINT,
+            is_write_locked BOOL,
+            total_cu_requested BIGINT,
+            total_cu_consumed BIGINT,
+            prioritization_fees_info text
+        );",
+                    temp_table
+                )
+                .as_str(),
+                &[],
+            )
+            .await?;
+
+        let statement = format!(
+            r#"
+            COPY {}(
+                account_key,
+                slot,
+                is_write_locked,
+                total_cu_requested,
+                total_cu_consumed,
+                prioritization_fees_info
+            ) FROM STDIN BINARY
+        "#,
+            temp_table
+        );
+
+        let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement.as_str()).await?;
+        let writer = BinaryCopyInWriter::new(
+            sink,
+            &[
+                Type::TEXT,
+                Type::INT8,
+                Type::BOOL,
+                Type::INT8,
+                Type::INT8,
+                Type::TEXT,
+            ],
+        );
+        pin_mut!(writer);
+        for account_usage in block_info.heavily_locked_accounts.iter() {
+            let is_writable = account_usage.is_write_locked;
+            let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(6);
+            let pf_json = serde_json::to_string(&account_usage.prioritization_fee_data)?;
+            args.push(&account_usage.key);
+            args.push(&block_info.slot);
+            args.push(&is_writable);
+            args.push(&account_usage.cu_requested);
+            args.push(&account_usage.cu_consumed);
+            args.push(&pf_json);
+            writer.as_mut().write(&args).await?;
+        }
+        writer.finish().await?;
+
+        let statement = format!(
+            r#"
+            INSERT INTO banking_stage_results_2.accounts_map_blocks
+            (   acc_id,
+                slot,
+                is_write_locked,
+                total_cu_requested,
+                total_cu_consumed,
+                prioritization_fees_info
+            )
+                SELECT 
+                    ( select acc_id from banking_stage_results_2.accounts where account_key = t.account_key ),
+                    t.slot,
+                    t.is_write_locked,
+                    t.total_cu_requested,
+                    t.total_cu_consumed,
+                    t.prioritization_fees_info
+                FROM (
+                    SELECT account_key,
+                    slot,
+                    is_write_locked,
+                    total_cu_requested,
+                    total_cu_consumed,
+                    prioritization_fees_info from {}
+                )
+                as t (account_key,
+                    slot,
+                    is_write_locked,
+                    total_cu_requested,
+                    total_cu_consumed,
+                    prioritization_fees_info
+                )
+                ON CONFLICT DO NOTHING;
+        "#,
+            temp_table
+        );
+        self.client.execute(statement.as_str(), &[]).await?;
+
+        self.drop_temp_table(temp_table).await?;
+        Ok(())
+    }
+
+    pub async fn save_block_info(&self, block_info: &BlockInfo) -> anyhow::Result<()> {
+        let statement = r#"
+            INSERT INTO banking_stage_results_2.blocks (
+                slot,
+                block_hash,
+                leader_identity,
+                successful_transactions,
+                processed_transactions,
+                total_cu_used,
+                total_cu_requested,
+                supp_infos
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+            "#;
+        self.client
+            .execute(
+                statement,
+                &[
+                    &block_info.slot,
+                    &block_info.block_hash,
+                    &block_info.leader_identity.clone().unwrap_or_default(),
+                    &block_info.successful_transactions,
+                    &block_info.processed_transactions,
+                    &block_info.total_cu_used,
+                    &block_info.total_cu_requested,
+                    &serde_json::to_string(&block_info.sup_info)?,
+                ],
+            )
+            .await?;
+        Ok(())
     }
 
     pub async fn save_banking_transaction_results(
@@ -124,49 +600,40 @@ impl PostgresSession {
         if txs.is_empty() {
             return Ok(());
         }
-        const NUMBER_OF_ARGS: usize = 10;
-
-        let txs: Vec<PostgresTransactionInfo> =
-            txs.iter().map(PostgresTransactionInfo::from).collect();
-
-        let statement = r#"
-                COPY banking_stage_results.transaction_infos(
-                    signature, errors, is_executed, is_confirmed, first_notification_slot, cu_requested, prioritization_fees, utc_timestamp, accounts_used, processed_slot
-                ) FROM STDIN BINARY
-            "#;
-        let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement).await?;
-        let writer = BinaryCopyInWriter::new(
-            sink,
-            &[
-                Type::TEXT,
-                Type::TEXT,
-                Type::BOOL,
-                Type::BOOL,
-                Type::INT8,
-                Type::INT8,
-                Type::INT8,
-                Type::TIMESTAMPTZ,
-                Type::TEXT,
-                Type::INT8,
-            ],
-        );
-        pin_mut!(writer);
-        for tx in txs.iter() {
-            let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS);
-            args.push(&tx.signature);
-            args.push(&tx.errors);
-            args.push(&tx.is_executed);
-            args.push(&tx.is_confirmed);
-            args.push(&tx.first_notification_slot);
-            args.push(&tx.cu_requested);
-            args.push(&tx.prioritization_fees);
-            args.push(&tx.utc_timestamp);
-            args.push(&tx.accounts_used);
-            args.push(&tx.processed_slot);
-
-            writer.as_mut().write(&args).await?;
-        }
-        writer.finish().await?;
+        // create transaction ids
+        let signatures = txs
+            .iter()
+            .map(|transaction| transaction.signature.clone())
+            .collect_vec();
+        self.create_transaction_ids(signatures).await?;
+        // create account ids
+        let accounts = txs
+            .iter()
+            .map(|transaction| transaction.account_used.clone())
+            .flatten()
+            .map(|(acc, _)| acc)
+            .collect_vec();
+        self.create_accounts_for_transaction(accounts).await?;
+        // add transaction in tx slot table
+        self.insert_transaction_in_txslot_table(&txs.as_slice())
+            .await?;
+        let txs_accounts = txs
+            .iter()
+            .map(|tx| AccountsForTransaction {
+                signature: tx.signature.clone(),
+                accounts: tx
+                    .account_used
+                    .iter()
+                    .map(|(key, is_writable)| AccountUsed {
+                        key: key.clone(),
+                        writable: *is_writable,
+                        is_signer: false,
+                    })
+                    .collect(),
+            })
+            .collect_vec();
+        // insert accounts for transaction
+        self.insert_accounts_for_transaction(txs_accounts).await?;
         Ok(())
     }
 
@@ -180,51 +647,46 @@ impl PostgresSession {
     }
 
     pub async fn save_block(&self, block_info: BlockInfo) -> anyhow::Result<()> {
-        const NUMBER_OF_ARGS: usize = 11;
-        let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(NUMBER_OF_ARGS);
-        args.push(&block_info.block_hash);
-        args.push(&block_info.slot);
-        args.push(&block_info.leader_identity);
-        args.push(&block_info.successful_transactions);
-        args.push(&block_info.banking_stage_errors);
-        args.push(&block_info.processed_transactions);
-        args.push(&block_info.total_cu_used);
-        args.push(&block_info.total_cu_requested);
-        let heavily_writelocked_accounts =
-            serde_json::to_string(&block_info.heavily_writelocked_accounts).unwrap_or_default();
-        let heavily_readlocked_accounts =
-            serde_json::to_string(&block_info.heavily_readlocked_accounts).unwrap_or_default();
-        args.push(&heavily_writelocked_accounts);
-        args.push(&heavily_readlocked_accounts);
+        // create transaction ids
+        let signatures = block_info
+            .transactions
+            .iter()
+            .map(|transaction| transaction.signature.clone())
+            .collect_vec();
+        self.create_transaction_ids(signatures).await?;
+        // create account ids
+        let accounts = block_info
+            .heavily_locked_accounts
+            .iter()
+            .map(|acc| acc.key.clone())
+            .collect_vec();
+        self.create_accounts_for_transaction(accounts).await?;
 
-        let supp_infos = serde_json::to_string(&block_info.sup_info).unwrap_or_default();
-        args.push(&supp_infos);
+        let txs_accounts = block_info
+            .transactions
+            .iter()
+            .map(|tx| AccountsForTransaction {
+                signature: tx.signature.clone(),
+                accounts: tx
+                    .accounts
+                    .iter()
+                    .map(|acc| AccountUsed {
+                        key: acc.key.clone(),
+                        writable: acc.is_writable,
+                        is_signer: acc.is_signer,
+                    })
+                    .collect(),
+            })
+            .collect_vec();
+        self.insert_accounts_for_transaction(txs_accounts).await?;
 
-        let statement = r#"
-                COPY banking_stage_results.blocks(
-                    block_hash, slot, leader_identity, successful_transactions, banking_stage_errors, processed_transactions, total_cu_used, total_cu_requested, heavily_writelocked_accounts, heavily_readlocked_accounts, supp_infos
-                ) FROM STDIN BINARY
-            "#;
-        let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement).await.unwrap();
-        let writer = BinaryCopyInWriter::new(
-            sink,
-            &[
-                Type::TEXT,
-                Type::INT8,
-                Type::TEXT,
-                Type::INT8,
-                Type::INT8,
-                Type::INT8,
-                Type::INT8,
-                Type::INT8,
-                Type::TEXT,
-                Type::TEXT,
-                Type::TEXT,
-            ],
-        );
-        pin_mut!(writer);
-        writer.as_mut().write(&args).await?;
-        writer.finish().await?;
+        // save transactions in block
+        self.insert_transactions_for_block(&block_info.transactions, block_info.slot)
+            .await?;
+
+        // save account usage in blocks
+        self.save_account_usage_in_block(&block_info).await?;
+        self.save_block_info(&block_info).await?;
         Ok(())
     }
 }
@@ -269,13 +731,13 @@ impl Postgres {
                         .map(|(_, tree)| tree.iter().map(|(_, info)| info).cloned().collect_vec())
                         .flatten()
                         .collect_vec();
-                    let batches = data.chunks(32).collect_vec();
+                    let batches = data.chunks(1024).collect_vec();
                     for batch in batches {
-                        if let Err(e) = session
+                        if let Err(err) = session
                             .save_banking_transaction_results(batch.to_vec())
                             .await
                         {
-                            panic!("saving transaction infos failed {}", e);
+                            panic!("Error saving transaction infos {}", err);
                         }
                     }
                 }
@@ -288,62 +750,19 @@ impl Postgres {
     }
 }
 
-pub struct PostgresTransactionInfo {
-    pub signature: String,
-    pub errors: String,
-    pub is_executed: bool,
-    pub is_confirmed: bool,
-    pub first_notification_slot: i64,
-    pub cu_requested: Option<i64>,
-    pub prioritization_fees: Option<i64>,
-    pub utc_timestamp: DateTime<Utc>,
-    pub accounts_used: String,
-    pub processed_slot: Option<i64>,
-}
-
 #[derive(Serialize, Clone)]
 pub struct TransactionErrorData {
     error: TransactionError,
-    slot: u64,
     count: usize,
 }
 
-#[derive(Serialize, Clone)]
 pub struct AccountUsed {
     key: String,
     writable: bool,
+    is_signer: bool,
 }
 
-impl From<&TransactionInfo> for PostgresTransactionInfo {
-    fn from(value: &TransactionInfo) -> Self {
-        let errors = value
-            .errors
-            .iter()
-            .map(|(key, count)| TransactionErrorData {
-                error: key.error.clone(),
-                slot: key.slot,
-                count: *count,
-            })
-            .collect_vec();
-        let accounts_used = value
-            .account_used
-            .iter()
-            .map(|(key, writable)| AccountUsed {
-                key: key.to_string(),
-                writable: *writable,
-            })
-            .collect_vec();
-        Self {
-            signature: value.signature.clone(),
-            errors: serde_json::to_string(&errors).unwrap_or_default(),
-            is_executed: value.is_executed,
-            is_confirmed: value.is_confirmed,
-            cu_requested: value.cu_requested.map(|x| x as i64),
-            first_notification_slot: value.first_notification_slot as i64,
-            prioritization_fees: value.prioritization_fees.map(|x| x as i64),
-            utc_timestamp: value.utc_timestamp,
-            accounts_used: serde_json::to_string(&accounts_used).unwrap_or_default(),
-            processed_slot: value.processed_slot.map(|x| x as i64),
-        }
-    }
+pub struct AccountsForTransaction {
+    pub signature: String,
+    pub accounts: Vec<AccountUsed>,
 }
