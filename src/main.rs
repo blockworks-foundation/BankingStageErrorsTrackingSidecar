@@ -5,7 +5,6 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
-use yellowstone_grpc_proto_original::geyser::SubscribeRequestPing;
 
 use crate::prometheus_sync::PrometheusSync;
 use block_info::BlockInfo;
@@ -137,8 +136,7 @@ pub async fn start_tracking_banking_stage_errors(
                         slot.store(s.slot, std::sync::atomic::Ordering::Relaxed);
                     }
                 },
-                _=>{
-                }
+                _=>{}
             }
         }
         error!("geyser banking stage connection failed {}", grpc_address);
@@ -189,26 +187,11 @@ async fn start_tracking_blocks(
                 Default::default(),
                 None,
                 Default::default(),
-                Some(SubscribeRequestPing { id: 0 }),
+                None,
             )
             .await
             .unwrap();
-        loop {
-            let res = tokio::time::timeout(Duration::from_secs(10), geyser_stream.next()).await;
-            let message_res = if let Ok(message) = res {
-                message
-            } else {
-                // restarting geyser block subscription because of timeout
-                error!("Restarting geyser block subscription because of timeout");
-                break;
-            };
-            let message = if let Some(message) = message_res {
-                message
-            } else {
-                error!("Restarting geyser block subscription because it is broken");
-                break;
-            };
-
+        while let Some(message) = geyser_stream.next().await {
             let Ok(message) = message else {
                     continue;
                 };
