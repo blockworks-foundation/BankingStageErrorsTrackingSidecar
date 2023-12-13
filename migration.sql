@@ -31,6 +31,7 @@ CREATE TABLE banking_stage_results_2.transaction_slot (
 );
 
 CREATE INDEX idx_transaction_slot_timestamp ON banking_stage_results_2.transaction_slot(utc_timestamp);
+CREATE INDEX idx_transaction_slot_slot ON banking_stage_results_2.transaction_slot(slot);
 
 CREATE TABLE banking_stage_results_2.blocks (
   slot BIGINT PRIMARY KEY,
