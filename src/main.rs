@@ -191,7 +191,9 @@ async fn start_tracking_blocks(
             )
             .await
             .unwrap();
-        while let Some(message) = geyser_stream.next().await {
+        while let Ok(Some(message)) =
+            tokio::time::timeout(Duration::from_secs(30), geyser_stream.next()).await
+        {
             let Ok(message) = message else {
                     continue;
                 };
