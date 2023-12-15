@@ -43,6 +43,7 @@ pub async fn start_tracking_banking_stage_errors(
     map_of_infos: Arc<DashMap<String, BTreeMap<u64, TransactionInfo>>>,
     slot_by_errors: Arc<DashMap<u64, u64>>,
     slot: Arc<AtomicU64>,
+    subscribe_to_slots: bool,
 ) {
     loop {
         let token: Option<String> = None;
@@ -53,11 +54,20 @@ pub async fn start_tracking_banking_stage_errors(
         )
         .unwrap();
 
-        let mut slot_subscription = HashMap::new();
-        slot_subscription.insert(
-            "slot_subscription".to_string(),
-            yellowstone_grpc_proto::geyser::SubscribeRequestFilterSlots {},
-        );
+        let slot_subscription: HashMap<
+            String,
+            yellowstone_grpc_proto::geyser::SubscribeRequestFilterSlots,
+        > = if subscribe_to_slots {
+            log::info!("subscribing to slots on grpc banking errors");
+            let mut slot_sub = HashMap::new();
+            slot_sub.insert(
+                "slot_sub".to_string(),
+                yellowstone_grpc_proto::geyser::SubscribeRequestFilterSlots {},
+            );
+            slot_sub
+        } else {
+            HashMap::new()
+        };
 
         let mut geyser_stream = client
             .subscribe_once(
@@ -74,7 +84,7 @@ pub async fn start_tracking_banking_stage_errors(
             .await
             .unwrap();
         log::info!("started geyser banking stage subscription");
-        while let Ok(Some(message)) = tokio::time::timeout(Duration::from_secs(30), geyser_stream.next()).await {
+        while let Some(message) = geyser_stream.next().await {
             let Ok(message) = message else {
             continue;
             };
@@ -129,7 +139,8 @@ pub async fn start_tracking_banking_stage_errors(
                 _=>{}
             }
         }
-        error!("geyser banking stage connection failed {} restarting", grpc_address);
+        error!("geyser banking stage connection failed {}", grpc_address);
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
@@ -236,6 +247,7 @@ async fn main() {
 
     let postgres = postgres::Postgres::new().await;
     let slot = Arc::new(AtomicU64::new(0));
+    let no_block_subscription = grpc_block_addr.is_none();
     postgres.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());
     let jhs = args
         .banking_grpc_addresses
@@ -251,6 +263,7 @@ async fn main() {
                     map_of_infos,
                     slot_by_errors,
                     slot,
+                    no_block_subscription,
                 )
                 .await;
             })
