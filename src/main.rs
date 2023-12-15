@@ -149,7 +149,6 @@ async fn start_tracking_blocks(
     grpc_x_token: Option<String>,
     postgres: postgres::Postgres,
     slot: Arc<AtomicU64>,
-    block_tasks: Arc<AtomicU64>,
 ) {
     let mut client = yellowstone_grpc_client_original::GeyserGrpcClient::connect(
         grpc_block_addr,
@@ -213,10 +212,8 @@ async fn start_tracking_blocks(
                     BANKING_STAGE_BLOCKS_TASK.inc();
                     let postgres = postgres.clone();
                     let slot = slot.clone();
-                    let block_tasks = block_tasks.clone();
                     tokio::spawn(async move {
                         let block_info = BlockInfo::new(&block);
-                        block_tasks.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         TXERROR_COUNT.add(
                             block_info.processed_transactions - block_info.successful_transactions,
                         );
@@ -225,7 +222,6 @@ async fn start_tracking_blocks(
                         }
                         slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
                         BANKING_STAGE_BLOCKS_TASK.dec();
-                        block_tasks.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                     });
                     // delay queue so that we get all the banking stage errors before processing block
                 }
@@ -253,20 +249,6 @@ async fn main() {
     let slot = Arc::new(AtomicU64::new(0));
     let no_block_subscription = grpc_block_addr.is_none();
     postgres.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());
-    // track block task and restart if it reaches too high because it means postgres is not working
-    let block_tasks = Arc::new(AtomicU64::new(0));
-    {
-        let block_tasks = block_tasks.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(60)).await;
-                if block_tasks.load(std::sync::atomic::Ordering::Relaxed) > 20 {
-                    panic!("Should restart the sidecar");
-                }
-            }
-        });
-    }
-
     let jhs = args
         .banking_grpc_addresses
         .iter()
@@ -288,14 +270,7 @@ async fn main() {
         })
         .collect_vec();
     if let Some(gprc_block_addr) = grpc_block_addr {
-        start_tracking_blocks(
-            gprc_block_addr,
-            args.grpc_x_token,
-            postgres,
-            slot,
-            block_tasks,
-        )
-        .await;
+        start_tracking_blocks(gprc_block_addr, args.grpc_x_token, postgres, slot).await;
     }
     futures::future::join_all(jhs).await;
 }
