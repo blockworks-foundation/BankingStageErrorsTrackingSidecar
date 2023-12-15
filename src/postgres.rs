@@ -110,7 +110,7 @@ impl PostgresSession {
             if let Err(err) = connection.await {
                 error!("Connection to Postgres broke {err:?}");
                 // should restart the side car / currently no way around it
-                panic!("Connection to Postgres broke {err:?}");
+                std::process::exit(-1);
             }
             unreachable!("Postgres thread returned")
         });
