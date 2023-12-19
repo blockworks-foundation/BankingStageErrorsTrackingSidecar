@@ -58,6 +58,8 @@ CREATE TABLE banking_stage_results_2.accounts_map_transaction(
   PRIMARY KEY (acc_id, transaction_id)
 );
 
+ALTER TABLE banking_stage_results_2.accounts_map_transaction ADD COLUMN is_atl BOOL;
+
 CREATE INDEX accounts_map_transaction_acc_id ON banking_stage_results_2.accounts_map_transaction(acc_id);
 CREATE INDEX accounts_map_transaction_transaction_id ON banking_stage_results_2.accounts_map_transaction(transaction_id);
 

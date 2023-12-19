@@ -310,7 +310,8 @@ impl PostgresSession {
             account_key char(44),
             signature char(88),
             is_writable BOOL,
-            is_signer BOOL
+            is_signer BOOL,
+            is_atl BOOL
         );",
                     temp_table
                 )
@@ -322,15 +323,17 @@ impl PostgresSession {
         let statement = format!(
             r#"
             COPY {}(
-                account_key, signature, is_writable, is_signer
+                account_key, signature, is_writable, is_signer, is_atl
             ) FROM STDIN BINARY
         "#,
             temp_table
         );
 
         let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement.as_str()).await?;
-        let writer =
-            BinaryCopyInWriter::new(sink, &[Type::TEXT, Type::TEXT, Type::BOOL, Type::BOOL]);
+        let writer = BinaryCopyInWriter::new(
+            sink,
+            &[Type::TEXT, Type::TEXT, Type::BOOL, Type::BOOL, Type::BOOL],
+        );
         pin_mut!(writer);
         for acc_tx in accounts_for_transaction {
             for acc in &acc_tx.accounts {
@@ -339,6 +342,7 @@ impl PostgresSession {
                 args.push(&acc_tx.signature);
                 args.push(&acc.writable);
                 args.push(&acc.is_signer);
+                args.push(&acc.is_atl);
                 writer.as_mut().write(&args).await?;
             }
         }
@@ -346,16 +350,17 @@ impl PostgresSession {
 
         let statement = format!(
             r#"
-            INSERT INTO banking_stage_results_2.accounts_map_transaction(acc_id, transaction_id, is_writable, is_signer)
+            INSERT INTO banking_stage_results_2.accounts_map_transaction(acc_id, transaction_id, is_writable, is_signer, is_atl)
                 SELECT 
                     ( select acc_id from banking_stage_results_2.accounts where account_key = t.account_key ),
                     ( select transaction_id from banking_stage_results_2.transactions where signature = t.signature ),
                     t.is_writable,
-                    t.is_signer
+                    t.is_signer,
+                    t.is_atl
                 FROM (
-                    SELECT account_key, signature, is_writable, is_signer from {}
+                    SELECT account_key, signature, is_writable, is_signer, is_atl from {}
                 )
-                as t (account_key, signature, is_writable, is_signer)
+                as t (account_key, signature, is_writable, is_signer, is_atl)
                 ON CONFLICT DO NOTHING;
         "#,
             temp_table
@@ -628,6 +633,7 @@ impl PostgresSession {
                         key: key.clone(),
                         writable: *is_writable,
                         is_signer: false,
+                        is_atl: false,
                     })
                     .collect(),
             })
@@ -674,6 +680,7 @@ impl PostgresSession {
                         key: acc.key.clone(),
                         writable: acc.is_writable,
                         is_signer: acc.is_signer,
+                        is_atl: acc.is_atl,
                     })
                     .collect(),
             })
@@ -760,6 +767,7 @@ pub struct AccountUsed {
     key: String,
     writable: bool,
     is_signer: bool,
+    is_atl: bool,
 }
 
 pub struct AccountsForTransaction {
