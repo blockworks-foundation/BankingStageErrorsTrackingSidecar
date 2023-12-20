@@ -228,6 +228,8 @@ async fn start_tracking_blocks(
                     let slot = slot.clone();
                     let atl_store = atl_store.clone();
                     tokio::spawn(async move {
+                        // to support address lookup tables delay processing a littlebit
+                        tokio::time::sleep(Duration::from_secs(2)).await;
                         let block_info = BlockInfo::new(atl_store, &block).await;
                         TXERROR_COUNT.add(
                             block_info.processed_transactions - block_info.successful_transactions,

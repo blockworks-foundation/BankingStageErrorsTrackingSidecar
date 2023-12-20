@@ -2,7 +2,7 @@ use dashmap::DashMap;
 use itertools::Itertools;
 use solana_address_lookup_table_program::state::AddressLookupTable;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::{pubkey::Pubkey, slot_hashes::SlotHashes, slot_history::Slot};
+use solana_sdk::{pubkey::Pubkey, slot_hashes::SlotHashes, slot_history::Slot, commitment_config::CommitmentConfig};
 use std::sync::Arc;
 
 use crate::block_info::TransactionAccount;
@@ -22,29 +22,44 @@ impl ATLStore {
 
     pub async fn load_atl_from_rpc(&self, atl: &Pubkey) {
         if !self.map.contains_key(&atl.to_string()) {
-            if let Ok(account) = self.rpc_client.get_account(&atl).await {
+            self.reload_atl_from_rpc(&atl).await;
+        }
+    }
+
+    pub async fn reload_atl_from_rpc(&self, atl:&Pubkey) {
+        let response = self.rpc_client.get_account_with_commitment(atl, CommitmentConfig::processed()).await;
+        if let Ok(account_res) = response {
+            if let Some(account) = account_res.value {
                 self.map.insert(atl.to_string(), account.data);
             }
         }
     }
 
-    pub async fn get_accounts(
+    pub async fn load_accounts(
         &self,
         current_slot: Slot,
         atl: Pubkey,
         write_accounts: &Vec<u8>,
         read_account: &Vec<u8>,
-    ) -> Vec<TransactionAccount> {
-        self.load_atl_from_rpc(&atl).await;
+    ) -> Option<Vec<TransactionAccount>> {
         match self.map.get(&atl.to_string()) {
             Some(account) => {
                 let lookup_table = AddressLookupTable::deserialize(&account.value()).unwrap();
                 let write_accounts = lookup_table
-                    .lookup(current_slot, write_accounts, &SlotHashes::default())
-                    .unwrap();
+                    .lookup(current_slot, write_accounts, &SlotHashes::default());
                 let read_account = lookup_table
-                    .lookup(current_slot, read_account, &SlotHashes::default())
-                    .unwrap();
+                    .lookup(current_slot, read_account, &SlotHashes::default());
+
+                let write_accounts = if let Ok(write_accounts) = write_accounts {
+                    write_accounts
+                } else {
+                    return None;
+                };
+                let read_account = if let Ok(read_account) = read_account {
+                    read_account
+                } else {
+                    return None;
+                };
 
                 let wa = write_accounts
                     .iter()
@@ -64,10 +79,35 @@ impl ATLStore {
                         is_atl: true,
                     })
                     .collect_vec();
-                [wa, ra].concat()
+                Some([wa, ra].concat())
             }
             None => {
-                vec![]
+                Some(vec![])
+            }
+        }
+    }
+
+    pub async fn get_accounts(
+        &self,
+        current_slot: Slot,
+        atl: Pubkey,
+        write_accounts: &Vec<u8>,
+        read_account: &Vec<u8>,
+    ) -> Vec<TransactionAccount> {
+        self.load_atl_from_rpc(&atl).await;
+        match self.load_accounts(current_slot, atl, write_accounts, read_account).await {
+            Some(x) => x,
+            None => {
+                //load atl
+                self.reload_atl_from_rpc(&atl).await;
+                match self.load_accounts(current_slot, atl, write_accounts, read_account).await {
+                    Some(x) => x,
+                    None => {
+                        // reloading did not work
+                        log::error!("cannot load atl even after");
+                        vec![]
+                    },
+                }
             }
         }
     }
