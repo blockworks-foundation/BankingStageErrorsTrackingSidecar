@@ -690,6 +690,55 @@ impl PostgresSession {
     }
 }
 
+impl PostgresSession {
+    pub async fn cleanup_old_data(&self, dry_run: bool) {
+        let result = self.client.execute("SELECT 1", &[]).await.unwrap();
+
+        // max slot from blocks table
+        let latest_slot = self.client.query_one(
+            "SELECT max(slot) as latest_slot FROM banking_stage_results_2.blocks", &[])
+        .await.unwrap();
+        // assume not null
+        let latest_slot: i64 = latest_slot.get("latest_slot");
+        info!("latest_slot from blocks table: {}", latest_slot);
+
+        // keep 1mio slots (apprx 4 days)
+        let slots_to_keep = 1000000;
+        let cutoff_slot = latest_slot - slots_to_keep;
+
+        let cutoff_transaction = self.client.query_one(
+            &format!(
+                r"
+                    SELECT max(transaction_id) as transaction_id FROM banking_stage_results_2.transaction_infos
+                    WHERE processed_slot < {cutoff_slot}
+                ",
+                cutoff_slot = cutoff_slot
+            ),
+            &[]).await.unwrap();
+
+        let cutoff_transaction: i64 = cutoff_transaction.get("transaction_id");
+
+        info!("cutoff slot(incl) from blocks table minus {} slots_to_keep: {}", slots_to_keep, cutoff_slot);
+        info!("cutoff transaction_id(incl) from transaction_infos table: {}", cutoff_transaction);
+
+        // delete accounts_map_transaction
+        let tx_to_delete = self.client.query_one(
+            &format!(
+                r"
+                    SELECT count(*) as cnt_tx FROM banking_stage_results_2.accounts_map_transaction amt
+                    WHERE amt.transaction_id <= {transaction_id}
+                ",
+                transaction_id = cutoff_transaction
+            ),
+            &[]).await.unwrap();
+
+        let tx_to_delete: i64 = tx_to_delete.get("cnt_tx");
+
+        info!("would delete transactions: {}", tx_to_delete);
+
+    }
+}
+
 #[derive(Clone)]
 pub struct Postgres {
     session: Arc<PostgresSession>,
