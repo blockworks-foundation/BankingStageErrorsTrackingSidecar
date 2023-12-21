@@ -2,6 +2,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
+use std::cmp::min;
 
 use anyhow::Context;
 use base64::Engine;
@@ -692,6 +693,7 @@ impl PostgresSession {
 
 impl PostgresSession {
     pub async fn cleanup_old_data(&self, dry_run: bool) {
+        let slots_to_keep = 1000000;
 
         // max slot from blocks table
         let latest_slot = self.client.query_one(
@@ -699,26 +701,48 @@ impl PostgresSession {
         .await.unwrap();
         // assume not null
         let latest_slot: i64 = latest_slot.get("latest_slot");
-        info!("latest_slot from blocks table: {}", latest_slot);
+        info!("latest_slot={} from blocks table; keeping {} slots", latest_slot, slots_to_keep);
 
         // keep 1mio slots (apprx 4 days)
-        let slots_to_keep = 1000000;
+        // do not delete cutoff_slot
         let cutoff_slot_excl = latest_slot - slots_to_keep;
 
-        let cutoff_transaction = self.client.query_one(
-            &format!(
-                r"
+        let cutoff_transaction_incl: i64 = {
+            let cutoff_transaction_from_txi_incl = self.client.query_one(
+                &format!(
+                    r"
                     SELECT max(transaction_id) as transaction_id FROM banking_stage_results_2.transaction_infos
                     WHERE processed_slot < {cutoff_slot}
                 ",
-                cutoff_slot = cutoff_slot_excl
-            ),
-            &[]).await.unwrap();
+                    cutoff_slot = cutoff_slot_excl
+                ),
+                &[]).await.unwrap();
+            let cutoff_transaction_from_txi_incl: Option<i64> = cutoff_transaction_from_txi_incl.get("transaction_id");
 
-        let cutoff_transaction_incl: i64 = cutoff_transaction.get("transaction_id");
+            let cutoff_transaction_from_txslot_incl = self.client.query_one(
+                &format!(
+                    r"
+                    SELECT max(transaction_id) as transaction_id FROM banking_stage_results_2.transaction_slot
+                    WHERE slot < {cutoff_slot}
+                ",
+                    cutoff_slot = cutoff_slot_excl
+                ),
+                &[]).await.unwrap();
+            let cutoff_transaction_from_txslot_incl: Option<i64> = cutoff_transaction_from_txslot_incl.get("transaction_id");
 
-        info!("cutoff slot(incl) from blocks table minus {} slots_to_keep: {}", slots_to_keep, cutoff_slot_excl);
-        info!("cutoff transaction_id(incl) from transaction_infos table: {}", cutoff_transaction_incl);
+            if cutoff_transaction_from_txi_incl.is_none() || cutoff_transaction_from_txslot_incl.is_none() {
+                info!("nothing to delete - abort");
+                return;
+            }
+
+            debug!("cutoff_transaction_from_txi_incl: {:?}", cutoff_transaction_from_txi_incl);
+            debug!("cutoff_transaction_from_txslot_incl: {:?}", cutoff_transaction_from_txslot_incl);
+
+            min::<i64>(cutoff_transaction_from_txi_incl.unwrap(), cutoff_transaction_from_txslot_incl.unwrap())
+        };
+
+        info!("delete slots but keep slots including and after {}", cutoff_slot_excl);
+        info!("should delete transactions with id =< {}", cutoff_transaction_incl);
 
         // delete accounts_map_transaction
         {
