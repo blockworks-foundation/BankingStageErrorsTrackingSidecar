@@ -9,7 +9,7 @@ use base64::Engine;
 use dashmap::DashMap;
 use futures::pin_mut;
 use itertools::Itertools;
-use log::{debug, error, info, warn};
+use log::{debug, error, info, Level, log, warn};
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
 use serde::Serialize;
@@ -705,6 +705,25 @@ impl PostgresSession {
         // keep 1mio slots (apprx 4 days)
         let slots_to_keep = 1000000;
 
+        self.client.execute("SET work_mem TO '256MB'", &[]).await.unwrap();
+        let work_mem: String =  self.client.query_one("show work_mem", &[]).await.unwrap().get("work_mem");
+        info!("Configured work_mem={}", work_mem);
+
+        {
+            info!("Rows before cleanup:");
+            self.log_rowcount(Level::Info, "blocks").await;
+            self.log_rowcount(Level::Info, "accounts").await;
+            self.log_rowcount(Level::Info, "transactions").await;
+            self.log_rowcount(Level::Info, "accounts_map_blocks").await;
+            self.log_rowcount(Level::Info, "accounts_map_transaction").await;
+            self.log_rowcount(Level::Info, "transaction_infos").await;
+            self.log_rowcount(Level::Info, "transaction_slot").await;
+        }
+
+
+
+        // TODO set work_mem
+
         // max slot from blocks table
         let latest_slot = self.client.query_one(
             "SELECT max(slot) as latest_slot FROM banking_stage_results_2.blocks", &[])
@@ -818,16 +837,68 @@ impl PostgresSession {
             info!("would delete from transaction_slot: {}", txslot_to_delete);
         }
 
-
-
-
         if dry_run {
             warn!("dry-run: stop now without changing anything");
             return;
         }
 
+        {
+            let deleted_rows = self.client.execute(
+                &format!(
+                    r"
+                    DELETE FROM banking_stage_results_2.transactions WHERE transaction_id <= {transaction_id}
+                ", transaction_id = cutoff_transaction_incl
+                ), &[]).await.unwrap();
+            info!("Deleted {} rows", deleted_rows);
+        }
+        {
+            let deleted_rows = self.client.execute(
+                &format!(
+                    r"
+                    DELETE FROM banking_stage_results_2.accounts_map_transaction WHERE transaction_id <= {transaction_id}
+                ", transaction_id = cutoff_transaction_incl
+                ), &[]).await.unwrap();
+            info!("Deleted {} rows", deleted_rows);
+        }
+        {
+            let deleted_rows = self.client.execute(
+                &format!(
+                    r"
+                    DELETE FROM banking_stage_results_2.transaction_infos WHERE processed_slot < {cutoff_slot}
+                ", cutoff_slot = cutoff_slot_excl
+                ), &[]).await.unwrap();
+            info!("Deleted {} rows", deleted_rows);
+        }{
+            let deleted_rows = self.client.execute(
+                &format!(
+                    r"
+                    DELETE FROM banking_stage_results_2.transaction_slot WHERE slot < {cutoff_slot}
+                ", cutoff_slot = cutoff_slot_excl
+                ), &[]).await.unwrap();
+            info!("Deleted {} rows", deleted_rows);
+        }
+
+        {
+            info!("Rows after cleanup:");
+            self.log_rowcount(Level::Info, "blocks").await;
+            self.log_rowcount(Level::Info, "accounts").await;
+            self.log_rowcount(Level::Info, "transactions").await;
+            self.log_rowcount(Level::Info, "accounts_map_blocks").await;
+            self.log_rowcount(Level::Info, "accounts_map_transaction").await;
+            self.log_rowcount(Level::Info, "transaction_infos").await;
+            self.log_rowcount(Level::Info, "transaction_slot").await;
+        }
+    }
+
+    async fn log_rowcount(&self, level: Level, table: &str)        {
+        let count: i64 = self.client.query_one(
+            &format!("SELECT count(*) as cnt FROM banking_stage_results_2.{tablename}", tablename = table), &[])
+            .await.unwrap()
+            .get("cnt");
+        log!(level, "- rows count in table <{}>: {}", table, count);
     }
 }
+
 
 #[derive(Clone)]
 pub struct Postgres {
