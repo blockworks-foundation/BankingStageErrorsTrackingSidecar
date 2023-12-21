@@ -123,3 +123,6 @@ VACUUM FULL banking_stage_results_2.transaction_slot;
 
 ALTER TABLE banking_stage_results_2.transactions ALTER COLUMN signature TYPE varchar(88);
 ALTER TABLE banking_stage_results_2.accounts ALTER COLUMN account_key TYPE varchar(44);
+
+CLUSTER banking_stage_results_2.accounts_map_transaction using accounts_map_transaction_pkey;
+
