@@ -8,7 +8,7 @@ use base64::Engine;
 use dashmap::DashMap;
 use futures::pin_mut;
 use itertools::Itertools;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
 use serde::Serialize;
@@ -722,19 +722,83 @@ impl PostgresSession {
         info!("cutoff transaction_id(incl) from transaction_infos table: {}", cutoff_transaction);
 
         // delete accounts_map_transaction
-        let tx_to_delete = self.client.query_one(
-            &format!(
-                r"
+        {
+            let tx_to_delete = self.client.query_one(
+                &format!(
+                    r"
                     SELECT count(*) as cnt_tx FROM banking_stage_results_2.accounts_map_transaction amt
-                    WHERE amt.transaction_id <= {transaction_id}
+                    WHERE amt.transaction_id <= {cutoff_transaction}
                 ",
-                transaction_id = cutoff_transaction
-            ),
-            &[]).await.unwrap();
+                    cutoff_transaction = cutoff_transaction
+                ),
+                &[]).await.unwrap();
 
-        let tx_to_delete: i64 = tx_to_delete.get("cnt_tx");
+            let tx_to_delete: i64 = tx_to_delete.get("cnt_tx");
 
-        info!("would delete transactions: {}", tx_to_delete);
+            info!("would delete transactions: {}", tx_to_delete);
+        }
+
+        {
+            let amb_to_delete = self.client.query_one(
+                &format!(
+                    r"
+                    SELECT count(*) as cnt_ambs FROM banking_stage_results_2.accounts_map_blocks amb
+                    WHERE amb.slot <= {cutoff_slot}
+                ",
+                    cutoff_slot = cutoff_slot
+                ),
+                &[]).await.unwrap();
+
+            let amb_to_delete: i64 = amb_to_delete.get("cnt_ambs");
+
+            info!("would delete from accounts_map_blocks: {}", amb_to_delete);
+        }
+
+        {
+            let txi_to_delete = self.client.query_one(
+                &format!(
+                    r"
+                    SELECT count(*) as cnt_txis FROM banking_stage_results_2.transaction_infos txi
+                    WHERE txi.processed_slot <= {cutoff_slot}
+                ",
+                    cutoff_slot = cutoff_slot
+                ),
+                &[]).await.unwrap();
+
+            let txi_to_delete: i64 = txi_to_delete.get("cnt_txis");
+
+            info!("would delete from transaction_infos: {}", txi_to_delete);
+        }
+
+        {
+            let txslot_to_delete = self.client.query_one(
+                &format!(
+                    r"
+                    SELECT count(*) as cnt_txslots FROM banking_stage_results_2.transaction_slot tx_slot
+                    WHERE tx_slot.slot <= {cutoff_slot}
+                ",
+                    cutoff_slot = cutoff_slot
+                ),
+                &[]).await.unwrap();
+
+            let txslot_to_delete: i64 = txslot_to_delete.get("cnt_txslots");
+
+            info!("would delete from transaction_slot: {}", txslot_to_delete);
+        }
+
+        // "accounts_map_blocks" -> delete rows slot before X
+        // "accounts_map_transaction" -> ????
+        // "blocks" -> keep, it iss small
+        // "errors" -> lookup data
+        // "transaction_infos" -> delete rows processed_slot before X
+        // "transaction_slot" -> delete transaction with slot before X
+        // "transactions" -> keep, these is pkey lookup table
+
+
+        if dry_run {
+            warn!("dry-run: stop now without changing anything");
+            return;
+        }
 
     }
 }
