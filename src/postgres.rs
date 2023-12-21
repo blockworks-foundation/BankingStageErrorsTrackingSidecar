@@ -3,6 +3,7 @@ use std::{
     time::Duration,
 };
 use std::cmp::min;
+use std::time::Instant;
 
 use anyhow::Context;
 use base64::Engine;
@@ -845,39 +846,44 @@ impl PostgresSession {
         }
 
         {
+            let started = Instant::now();
             let deleted_rows = self.client.execute(
                 &format!(
                     r"
                     DELETE FROM banking_stage_results_2.transactions WHERE transaction_id <= {transaction_id}
                 ", transaction_id = cutoff_transaction_incl
                 ), &[]).await.unwrap();
-            info!("Deleted {} rows from transactions", deleted_rows);
+            info!("Deleted {} rows from transactions in {:.2}ms", deleted_rows, started.elapsed().as_secs_f32());
         }
         {
+            let started = Instant::now();
             let deleted_rows = self.client.execute(
                 &format!(
                     r"
                     DELETE FROM banking_stage_results_2.accounts_map_transaction WHERE transaction_id <= {transaction_id}
                 ", transaction_id = cutoff_transaction_incl
                 ), &[]).await.unwrap();
-            info!("Deleted {} rows from accounts_map_transaction", deleted_rows);
+            info!("Deleted {} rows from accounts_map_transaction in {:.2}ms", deleted_rows, started.elapsed().as_secs_f32());
         }
         {
+            let started = Instant::now();
             let deleted_rows = self.client.execute(
                 &format!(
                     r"
                     DELETE FROM banking_stage_results_2.transaction_infos WHERE processed_slot < {cutoff_slot}
                 ", cutoff_slot = cutoff_slot_excl
                 ), &[]).await.unwrap();
-            info!("Deleted {} rows from transaction_infos", deleted_rows);
-        }{
+            info!("Deleted {} rows from transaction_infos in {:.2}ms", deleted_rows, started.elapsed().as_secs_f32());
+        }
+        {
+            let started = Instant::now();
             let deleted_rows = self.client.execute(
                 &format!(
                     r"
                     DELETE FROM banking_stage_results_2.transaction_slot WHERE slot < {cutoff_slot}
                 ", cutoff_slot = cutoff_slot_excl
                 ), &[]).await.unwrap();
-            info!("Deleted {} rows from transaction_slot", deleted_rows);
+            info!("Deleted {} rows from transaction_slot in {:.2}ms", deleted_rows, started.elapsed().as_secs_f32());
         }
 
         {
