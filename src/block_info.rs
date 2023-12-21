@@ -12,7 +12,9 @@ use solana_sdk::{
     signature::Signature,
     slot_history::Slot,
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
+
+use crate::alt_store::ALTStore;
 
 #[derive(Serialize, Debug, Clone)]
 pub struct PrioFeeData {
@@ -77,10 +79,12 @@ pub struct PrioritizationFeesInfo {
     pub p_max: u64,
 }
 
+#[derive(Clone)]
 pub struct TransactionAccount {
     pub key: String,
     pub is_writable: bool,
     pub is_signer: bool,
+    pub is_alt: bool,
 }
 
 pub struct BlockTransactionInfo {
@@ -108,13 +112,14 @@ pub struct BlockInfo {
 }
 
 impl BlockInfo {
-    pub fn process_versioned_message(
+    pub async fn process_versioned_message(
+        atl_store: Arc<ALTStore>,
         signature: String,
         slot: Slot,
         message: &VersionedMessage,
         prio_fees_in_block: &mut Vec<u64>,
-        writelocked_accounts: &mut HashMap<Pubkey, AccountData>,
-        readlocked_accounts: &mut HashMap<Pubkey, AccountData>,
+        writelocked_accounts: &mut HashMap<String, AccountData>,
+        readlocked_accounts: &mut HashMap<String, AccountData>,
         cu_consumed: u64,
         total_cu_requested: &mut u64,
         is_vote: bool,
@@ -169,19 +174,37 @@ impl BlockInfo {
             std::cmp::min(1_400_000, cu_requested.unwrap_or(200000 * nb_ix_except_cb));
         *total_cu_requested += cu_requested;
         if !is_vote {
-            let accounts = message
+            let mut accounts = message
                 .static_account_keys()
                 .iter()
                 .enumerate()
-                .map(|(index, account)| {
-                    (
-                        message.is_maybe_writable(index),
-                        *account,
-                        message.is_signer(index),
-                    )
+                .map(|(index, account)| TransactionAccount {
+                    key: account.to_string(),
+                    is_writable: message.is_maybe_writable(index),
+                    is_signer: message.is_signer(index),
+                    is_alt: false,
                 })
                 .collect_vec();
-            for writable_account in accounts.iter().filter(|x| x.0).map(|x| x.1) {
+            if let Some(atl_messages) = message.address_table_lookups() {
+                for atl_message in atl_messages {
+                    let atl_acc = atl_message.account_key;
+                    let mut atl_accs = atl_store
+                        .get_accounts(
+                            slot,
+                            &atl_acc,
+                            &atl_message.writable_indexes,
+                            &atl_message.readonly_indexes,
+                        )
+                        .await;
+                    accounts.append(&mut atl_accs);
+                }
+            }
+
+            for writable_account in accounts
+                .iter()
+                .filter(|x| x.is_writable)
+                .map(|x| x.key.clone())
+            {
                 match writelocked_accounts.get_mut(&writable_account) {
                     Some(x) => {
                         x.cu_requested += cu_requested;
@@ -190,9 +213,9 @@ impl BlockInfo {
                     }
                     None => {
                         writelocked_accounts.insert(
-                            writable_account,
+                            writable_account.clone(),
                             AccountData {
-                                key: writable_account.to_string(),
+                                key: writable_account,
                                 cu_consumed,
                                 cu_requested,
                                 vec_pf: vec![prioritization_fees],
@@ -202,7 +225,11 @@ impl BlockInfo {
                 }
             }
 
-            for readable_account in accounts.iter().filter(|x| !x.0).map(|x| x.1) {
+            for readable_account in accounts
+                .iter()
+                .filter(|x| !x.is_writable)
+                .map(|x| x.key.clone())
+            {
                 match readlocked_accounts.get_mut(&readable_account) {
                     Some(x) => {
                         x.cu_requested += cu_requested;
@@ -211,9 +238,9 @@ impl BlockInfo {
                     }
                     None => {
                         readlocked_accounts.insert(
-                            readable_account,
+                            readable_account.clone(),
                             AccountData {
-                                key: readable_account.to_string(),
+                                key: readable_account,
                                 cu_consumed,
                                 cu_requested,
                                 vec_pf: vec![prioritization_fees],
@@ -222,6 +249,7 @@ impl BlockInfo {
                     }
                 }
             }
+
             Some(BlockTransactionInfo {
                 signature,
                 processed_slot: slot as i64,
@@ -230,14 +258,7 @@ impl BlockInfo {
                 cu_consumed: cu_consumed as i64,
                 prioritization_fees: prioritization_fees as i64,
                 supp_infos: String::new(),
-                accounts: accounts
-                    .iter()
-                    .map(|(is_writable, key, is_signer)| TransactionAccount {
-                        key: key.to_string(),
-                        is_signer: *is_signer,
-                        is_writable: *is_writable,
-                    })
-                    .collect(),
+                accounts: accounts,
             })
         } else {
             None
@@ -245,8 +266,8 @@ impl BlockInfo {
     }
 
     pub fn calculate_account_usage(
-        writelocked_accounts: &HashMap<Pubkey, AccountData>,
-        readlocked_accounts: &HashMap<Pubkey, AccountData>,
+        writelocked_accounts: &HashMap<String, AccountData>,
+        readlocked_accounts: &HashMap<String, AccountData>,
     ) -> Vec<AccountUsage> {
         let mut accounts = writelocked_accounts
             .iter()
@@ -281,7 +302,8 @@ impl BlockInfo {
         }
     }
 
-    pub fn new(
+    pub async fn new(
+        atl_store: Arc<ALTStore>,
         block: &yellowstone_grpc_proto_original::prelude::SubscribeUpdateBlock,
     ) -> BlockInfo {
         let block_hash = block.blockhash.clone();
@@ -314,8 +336,8 @@ impl BlockInfo {
                     .unwrap_or(0)
             })
             .sum::<u64>() as i64;
-        let mut writelocked_accounts: HashMap<Pubkey, AccountData> = HashMap::new();
-        let mut readlocked_accounts: HashMap<Pubkey, AccountData> = HashMap::new();
+        let mut writelocked_accounts: HashMap<String, AccountData> = HashMap::new();
+        let mut readlocked_accounts: HashMap<String, AccountData> = HashMap::new();
         let mut total_cu_requested: u64 = 0;
         let mut prio_fees_in_block = vec![];
         let mut block_transactions = vec![];
@@ -383,8 +405,10 @@ impl BlockInfo {
                     })
                     .collect(),
             });
+            let atl_store = atl_store.clone();
 
             let transaction = Self::process_versioned_message(
+                atl_store,
                 signature,
                 slot,
                 &message,
@@ -395,7 +419,8 @@ impl BlockInfo {
                 &mut total_cu_requested,
                 transaction.is_vote,
                 meta.err.is_none(),
-            );
+            )
+            .await;
             if let Some(transaction) = transaction {
                 block_transactions.push(transaction);
             }

@@ -4,6 +4,9 @@ use clap::Parser;
 #[command(author, version, about, long_about = None)]
 pub struct Args {
     #[arg(short, long)]
+    pub rpc_url: String,
+
+    #[arg(short, long)]
     pub grpc_address_to_fetch_blocks: Option<String>,
 
     #[arg(short = 'x', long)]

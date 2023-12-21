@@ -1,5 +1,7 @@
 use clap::Parser;
 use itertools::Itertools;
+use solana_rpc_client::nonblocking::rpc_client::{self, RpcClient};
+use solana_sdk::pubkey::Pubkey;
 use std::{
     collections::HashMap,
     sync::{atomic::AtomicU64, Arc},
@@ -11,10 +13,11 @@ use block_info::BlockInfo;
 use cli::Args;
 use dashmap::DashMap;
 use futures::StreamExt;
-use log::{debug, error};
+use log::{debug, error, info};
 use prometheus::{opts, register_int_counter, register_int_gauge, IntCounter, IntGauge};
 use transaction_info::TransactionInfo;
 
+mod alt_store;
 mod block_info;
 mod cli;
 mod postgres;
@@ -43,7 +46,7 @@ pub async fn start_tracking_banking_stage_errors(
     map_of_infos: Arc<DashMap<(String, u64), TransactionInfo>>,
     slot_by_errors: Arc<DashMap<u64, u64>>,
     slot: Arc<AtomicU64>,
-    subscribe_to_slots: bool,
+    _subscribe_to_slots: bool,
 ) {
     loop {
         let token: Option<String> = None;
@@ -57,16 +60,14 @@ pub async fn start_tracking_banking_stage_errors(
         let slot_subscription: HashMap<
             String,
             yellowstone_grpc_proto::geyser::SubscribeRequestFilterSlots,
-        > = if subscribe_to_slots {
+        > = {
             log::info!("subscribing to slots on grpc banking errors");
             let mut slot_sub = HashMap::new();
             slot_sub.insert(
-                "slot_sub".to_string(),
+                "slot_sub_for_banking_tx".to_string(),
                 yellowstone_grpc_proto::geyser::SubscribeRequestFilterSlots {},
             );
             slot_sub
-        } else {
-            HashMap::new()
         };
 
         let mut geyser_stream = client
@@ -77,14 +78,16 @@ pub async fn start_tracking_banking_stage_errors(
                 Default::default(),
                 Default::default(),
                 Default::default(),
-                Some(yellowstone_grpc_proto::prelude::CommitmentLevel::Processed),
+                Some(yellowstone_grpc_proto::prelude::CommitmentLevel::Confirmed),
                 Default::default(),
                 true,
             )
             .await
             .unwrap();
         log::info!("started geyser banking stage subscription");
-        while let Some(message) = geyser_stream.next().await {
+        while let Ok(Some(message)) =
+            tokio::time::timeout(Duration::from_secs(30), geyser_stream.next()).await
+        {
             let Ok(message) = message else {
             continue;
             };
@@ -132,11 +135,11 @@ pub async fn start_tracking_banking_stage_errors(
             }
         }
         error!("geyser banking stage connection failed {}", grpc_address);
-        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
 async fn start_tracking_blocks(
+    rpc_client: Arc<RpcClient>,
     grpc_block_addr: String,
     grpc_x_token: Option<String>,
     postgres: postgres::Postgres,
@@ -148,6 +151,7 @@ async fn start_tracking_blocks(
         None,
     )
     .unwrap();
+    let atl_store = Arc::new(alt_store::ALTStore::new(rpc_client));
 
     loop {
         let mut blocks_subs = HashMap::new();
@@ -158,6 +162,16 @@ async fn start_tracking_blocks(
                 include_transactions: Some(true),
                 include_accounts: Some(false),
                 include_entries: Some(false),
+            },
+        );
+
+        let mut accounts_subs = HashMap::new();
+        accounts_subs.insert(
+            "sidecar_atl_accounts_subscription".to_string(),
+            yellowstone_grpc_proto_original::prelude::SubscribeRequestFilterAccounts {
+                account: vec![],
+                filters: vec![],
+                owner: vec![solana_address_lookup_table_program::id().to_string()],
             },
         );
 
@@ -204,8 +218,11 @@ async fn start_tracking_blocks(
                     BANKING_STAGE_BLOCKS_TASK.inc();
                     let postgres = postgres.clone();
                     let slot = slot.clone();
+                    let atl_store = atl_store.clone();
                     tokio::spawn(async move {
-                        let block_info = BlockInfo::new(&block);
+                        // to support address lookup tables delay processing a littlebit
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        let block_info = BlockInfo::new(atl_store, &block).await;
                         TXERROR_COUNT.add(
                             block_info.processed_transactions - block_info.successful_transactions,
                         );
@@ -216,7 +233,15 @@ async fn start_tracking_blocks(
                         BANKING_STAGE_BLOCKS_TASK.dec();
                     });
                     // delay queue so that we get all the banking stage errors before processing block
-                }
+                },
+                yellowstone_grpc_proto_original::prelude::subscribe_update::UpdateOneof::Account(account_update) => {
+                    info!("ATL updated");
+                    if let Some(account) = account_update.account {
+                        let bytes: [u8; 32] = account.pubkey.try_into().unwrap_or(Pubkey::default().to_bytes());
+                        let pubkey = Pubkey::new_from_array(bytes);
+                        atl_store.map.insert( pubkey, account.data);
+                    }
+                },
                 _ => {}
             };
         }
@@ -230,6 +255,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
+    let rpc_client = Arc::new(rpc_client::RpcClient::new(args.rpc_url));
 
     let _prometheus_jh = PrometheusSync::sync(args.prometheus_addr.clone());
 
@@ -262,7 +288,14 @@ async fn main() {
         })
         .collect_vec();
     if let Some(gprc_block_addr) = grpc_block_addr {
-        start_tracking_blocks(gprc_block_addr, args.grpc_x_token, postgres, slot).await;
+        start_tracking_blocks(
+            rpc_client,
+            gprc_block_addr,
+            args.grpc_x_token,
+            postgres,
+            slot,
+        )
+        .await;
     }
     futures::future::join_all(jhs).await;
 }
