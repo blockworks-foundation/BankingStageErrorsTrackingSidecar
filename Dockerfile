@@ -14,10 +14,11 @@ FROM base as build
 COPY --from=plan /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --bin grpc_banking_transactions_notifications
+RUN cargo build --release --bin grpc_banking_transactions_notifications --bin cleanupdb
 
 FROM debian:bullseye-slim as run
 RUN apt-get update && apt-get -y install ca-certificates libc6
 COPY --from=build /app/target/release/grpc_banking_transactions_notifications /usr/local/bin/
+COPY --from=build /app/target/release/cleanupdb /usr/local/bin/
 
 CMD grpc_banking_transactions_notifications --rpc-url "$RPC_URL" --grpc-address-to-fetch-blocks "$GEYSER_GRPC_ADDRESS" --grpc-x-token "$GEYSER_GRPC_X_TOKEN" --banking-grpc-addresses "$LIST_OF_BANKING_STAGE_GRPCS"
