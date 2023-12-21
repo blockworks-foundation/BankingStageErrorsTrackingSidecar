@@ -17,7 +17,7 @@ use log::{debug, error, info};
 use prometheus::{opts, register_int_counter, register_int_gauge, IntCounter, IntGauge};
 use transaction_info::TransactionInfo;
 
-mod atl_store;
+mod alt_store;
 mod block_info;
 mod cli;
 mod postgres;
@@ -159,7 +159,7 @@ async fn start_tracking_blocks(
         None,
     )
     .unwrap();
-    let atl_store = Arc::new(atl_store::ATLStore::new(rpc_client));
+    let atl_store = Arc::new(alt_store::ALTStore::new(rpc_client));
 
     loop {
         let mut blocks_subs = HashMap::new();
@@ -247,7 +247,7 @@ async fn start_tracking_blocks(
                     if let Some(account) = account_update.account {
                         let bytes: [u8; 32] = account.pubkey.try_into().unwrap_or(Pubkey::default().to_bytes());
                         let pubkey = Pubkey::new_from_array(bytes);
-                        atl_store.map.insert( pubkey.to_string(), account.data);
+                        atl_store.map.insert( pubkey, account.data);
                     }
                 },
                 _ => {}

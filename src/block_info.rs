@@ -14,7 +14,7 @@ use solana_sdk::{
 };
 use std::{collections::HashMap, sync::Arc};
 
-use crate::atl_store::ATLStore;
+use crate::alt_store::ALTStore;
 
 #[derive(Serialize, Debug, Clone)]
 pub struct PrioFeeData {
@@ -84,7 +84,7 @@ pub struct TransactionAccount {
     pub key: String,
     pub is_writable: bool,
     pub is_signer: bool,
-    pub is_atl: bool,
+    pub is_alt: bool,
 }
 
 pub struct BlockTransactionInfo {
@@ -113,7 +113,7 @@ pub struct BlockInfo {
 
 impl BlockInfo {
     pub async fn process_versioned_message(
-        atl_store: Arc<ATLStore>,
+        atl_store: Arc<ALTStore>,
         signature: String,
         slot: Slot,
         message: &VersionedMessage,
@@ -182,7 +182,7 @@ impl BlockInfo {
                     key: account.to_string(),
                     is_writable: message.is_maybe_writable(index),
                     is_signer: message.is_signer(index),
-                    is_atl: false,
+                    is_alt: false,
                 })
                 .collect_vec();
             if let Some(atl_messages) = message.address_table_lookups() {
@@ -191,7 +191,7 @@ impl BlockInfo {
                     let mut atl_accs = atl_store
                         .get_accounts(
                             slot,
-                            atl_acc,
+                            &atl_acc,
                             &atl_message.writable_indexes,
                             &atl_message.readonly_indexes,
                         )
@@ -303,7 +303,7 @@ impl BlockInfo {
     }
 
     pub async fn new(
-        atl_store: Arc<ATLStore>,
+        atl_store: Arc<ALTStore>,
         block: &yellowstone_grpc_proto_original::prelude::SubscribeUpdateBlock,
     ) -> BlockInfo {
         let block_hash = block.blockhash.clone();

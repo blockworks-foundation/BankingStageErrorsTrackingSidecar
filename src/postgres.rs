@@ -680,7 +680,7 @@ impl PostgresSession {
                         key: acc.key.clone(),
                         writable: acc.is_writable,
                         is_signer: acc.is_signer,
-                        is_atl: acc.is_atl,
+                        is_atl: acc.is_alt,
                     })
                     .collect(),
             })
