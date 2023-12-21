@@ -720,10 +720,6 @@ impl PostgresSession {
             self.log_rowcount(Level::Info, "transaction_slot").await;
         }
 
-
-
-        // TODO set work_mem
-
         // max slot from blocks table
         let latest_slot = self.client.query_one(
             "SELECT max(slot) as latest_slot FROM banking_stage_results_2.blocks", &[])
@@ -758,15 +754,21 @@ impl PostgresSession {
                 &[]).await.unwrap();
             let cutoff_transaction_from_txslot_incl: Option<i64> = cutoff_transaction_from_txslot_incl.get("transaction_id");
 
-            if cutoff_transaction_from_txi_incl.is_none() || cutoff_transaction_from_txslot_incl.is_none() {
+            debug!("cutoff_transaction_from_txi_incl: {:?}", cutoff_transaction_from_txi_incl);
+            debug!("cutoff_transaction_from_txslot_incl: {:?}", cutoff_transaction_from_txslot_incl);
+
+            let min_transaction_id: Option<i64> =
+                vec![cutoff_transaction_from_txi_incl, cutoff_transaction_from_txslot_incl]
+                    .into_iter()
+                    .filter_map(|x| x)
+                    .min();
+
+            if min_transaction_id.is_none() {
                 info!("nothing to delete - abort");
                 return;
             }
 
-            debug!("cutoff_transaction_from_txi_incl: {:?}", cutoff_transaction_from_txi_incl);
-            debug!("cutoff_transaction_from_txslot_incl: {:?}", cutoff_transaction_from_txslot_incl);
-
-            min::<i64>(cutoff_transaction_from_txi_incl.unwrap(), cutoff_transaction_from_txslot_incl.unwrap())
+            min_transaction_id.unwrap()
         };
 
         info!("delete slots but keep slots including and after {}", cutoff_slot_excl);
@@ -849,7 +851,7 @@ impl PostgresSession {
                     DELETE FROM banking_stage_results_2.transactions WHERE transaction_id <= {transaction_id}
                 ", transaction_id = cutoff_transaction_incl
                 ), &[]).await.unwrap();
-            info!("Deleted {} rows", deleted_rows);
+            info!("Deleted {} rows from transactions", deleted_rows);
         }
         {
             let deleted_rows = self.client.execute(
@@ -858,7 +860,7 @@ impl PostgresSession {
                     DELETE FROM banking_stage_results_2.accounts_map_transaction WHERE transaction_id <= {transaction_id}
                 ", transaction_id = cutoff_transaction_incl
                 ), &[]).await.unwrap();
-            info!("Deleted {} rows", deleted_rows);
+            info!("Deleted {} rows from accounts_map_transaction", deleted_rows);
         }
         {
             let deleted_rows = self.client.execute(
@@ -867,7 +869,7 @@ impl PostgresSession {
                     DELETE FROM banking_stage_results_2.transaction_infos WHERE processed_slot < {cutoff_slot}
                 ", cutoff_slot = cutoff_slot_excl
                 ), &[]).await.unwrap();
-            info!("Deleted {} rows", deleted_rows);
+            info!("Deleted {} rows from transaction_infos", deleted_rows);
         }{
             let deleted_rows = self.client.execute(
                 &format!(
@@ -875,7 +877,7 @@ impl PostgresSession {
                     DELETE FROM banking_stage_results_2.transaction_slot WHERE slot < {cutoff_slot}
                 ", cutoff_slot = cutoff_slot_excl
                 ), &[]).await.unwrap();
-            info!("Deleted {} rows", deleted_rows);
+            info!("Deleted {} rows from transaction_slot", deleted_rows);
         }
 
         {
