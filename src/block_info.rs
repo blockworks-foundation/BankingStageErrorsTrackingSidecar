@@ -1,3 +1,4 @@
+use crate::alt_store::ALTStore;
 use itertools::Itertools;
 use serde::Serialize;
 use solana_sdk::{
@@ -13,8 +14,6 @@ use solana_sdk::{
     slot_history::Slot,
 };
 use std::{collections::HashMap, sync::Arc};
-
-use crate::alt_store::ALTStore;
 
 #[derive(Serialize, Debug, Clone)]
 pub struct PrioFeeData {
