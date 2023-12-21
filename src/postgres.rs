@@ -702,9 +702,11 @@ impl PostgresSession {
     // "accounts_map_transaction" -> delete rows with transaction_id before X
     // "transaction_infos" -> delete rows processed_slot before X
     // "transaction_slot" -> delete transaction with slot before X
-    pub async fn cleanup_old_data(&self, dry_run: bool) {
+    pub async fn cleanup_old_data(&self, slots_to_keep: i64, dry_run: bool) {
         // keep 1mio slots (apprx 4 days)
-        let slots_to_keep = 1000000;
+        info!("{}Running cleanup job with slots_to_keep={}",
+            if dry_run { "DRY-RUN: " } else { "" },
+            slots_to_keep);
 
         self.client.execute("SET work_mem TO '256MB'", &[]).await.unwrap();
         let work_mem: String =  self.client.query_one("show work_mem", &[]).await.unwrap().get("work_mem");
@@ -727,10 +729,10 @@ impl PostgresSession {
             .await.unwrap();
         // assume not null
         let latest_slot: i64 = latest_slot.get("latest_slot");
-        info!("latest_slot={} from blocks table; keeping {} slots", latest_slot, slots_to_keep);
 
         // do not delete cutoff_slot
         let cutoff_slot_excl = latest_slot - slots_to_keep;
+        info!("latest_slot={} from blocks table; keeping {} slots - i.e. slot {}", latest_slot, slots_to_keep,  cutoff_slot_excl);
 
         let cutoff_transaction_incl: i64 = {
             let cutoff_transaction_from_txi_incl = self.client.query_one(
