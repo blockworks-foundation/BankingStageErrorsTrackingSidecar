@@ -692,6 +692,15 @@ impl PostgresSession {
 }
 
 impl PostgresSession {
+
+    // "errors" -> lookup data
+    // "blocks" -> keep, it its small
+    // "accounts" -> keep, table is used for pkey lookup
+    // "transactions" -> keep, table is used for pkey lookup
+    // "accounts_map_blocks" -> delete rows slot before X
+    // "accounts_map_transaction" -> delete rows with transaction_id before X
+    // "transaction_infos" -> delete rows processed_slot before X
+    // "transaction_slot" -> delete transaction with slot before X
     pub async fn cleanup_old_data(&self, dry_run: bool) {
         // keep 1mio slots (apprx 4 days)
         let slots_to_keep = 1000000;
@@ -766,7 +775,7 @@ impl PostgresSession {
                 &format!(
                     r"
                         SELECT count(*) as cnt_ambs FROM banking_stage_results_2.accounts_map_blocks amb
-                        WHERE amb.slot <= {cutoff_slot}
+                        WHERE amb.slot < {cutoff_slot}
                     ",
                     cutoff_slot = cutoff_slot_excl
                 ),
@@ -782,7 +791,7 @@ impl PostgresSession {
                 &format!(
                     r"
                         SELECT count(*) as cnt_txis FROM banking_stage_results_2.transaction_infos txi
-                        WHERE txi.processed_slot <= {cutoff_slot}
+                        WHERE txi.processed_slot < {cutoff_slot}
                     ",
                     cutoff_slot = cutoff_slot_excl
                 ),
@@ -798,7 +807,7 @@ impl PostgresSession {
                 &format!(
                     r"
                         SELECT count(*) as cnt_txslots FROM banking_stage_results_2.transaction_slot tx_slot
-                        WHERE tx_slot.slot <= {cutoff_slot}
+                        WHERE tx_slot.slot < {cutoff_slot}
                     ",
                     cutoff_slot = cutoff_slot_excl
                 ),
@@ -809,13 +818,7 @@ impl PostgresSession {
             info!("would delete from transaction_slot: {}", txslot_to_delete);
         }
 
-        // "accounts_map_blocks" -> delete rows slot before X
-        // "accounts_map_transaction" -> ????
-        // "blocks" -> keep, it iss small
-        // "errors" -> lookup data
-        // "transaction_infos" -> delete rows processed_slot before X
-        // "transaction_slot" -> delete transaction with slot before X
-        // "transactions" -> keep, these is pkey lookup table
+
 
 
         if dry_run {
