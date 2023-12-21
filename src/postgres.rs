@@ -693,17 +693,17 @@ impl PostgresSession {
 
 impl PostgresSession {
     pub async fn cleanup_old_data(&self, dry_run: bool) {
+        // keep 1mio slots (apprx 4 days)
         let slots_to_keep = 1000000;
 
         // max slot from blocks table
         let latest_slot = self.client.query_one(
             "SELECT max(slot) as latest_slot FROM banking_stage_results_2.blocks", &[])
-        .await.unwrap();
+            .await.unwrap();
         // assume not null
         let latest_slot: i64 = latest_slot.get("latest_slot");
         info!("latest_slot={} from blocks table; keeping {} slots", latest_slot, slots_to_keep);
 
-        // keep 1mio slots (apprx 4 days)
         // do not delete cutoff_slot
         let cutoff_slot_excl = latest_slot - slots_to_keep;
 
@@ -711,9 +711,9 @@ impl PostgresSession {
             let cutoff_transaction_from_txi_incl = self.client.query_one(
                 &format!(
                     r"
-                    SELECT max(transaction_id) as transaction_id FROM banking_stage_results_2.transaction_infos
-                    WHERE processed_slot < {cutoff_slot}
-                ",
+                        SELECT max(transaction_id) as transaction_id FROM banking_stage_results_2.transaction_infos
+                        WHERE processed_slot < {cutoff_slot}
+                    ",
                     cutoff_slot = cutoff_slot_excl
                 ),
                 &[]).await.unwrap();
@@ -722,9 +722,9 @@ impl PostgresSession {
             let cutoff_transaction_from_txslot_incl = self.client.query_one(
                 &format!(
                     r"
-                    SELECT max(transaction_id) as transaction_id FROM banking_stage_results_2.transaction_slot
-                    WHERE slot < {cutoff_slot}
-                ",
+                        SELECT max(transaction_id) as transaction_id FROM banking_stage_results_2.transaction_slot
+                        WHERE slot < {cutoff_slot}
+                    ",
                     cutoff_slot = cutoff_slot_excl
                 ),
                 &[]).await.unwrap();
@@ -749,9 +749,9 @@ impl PostgresSession {
             let tx_to_delete = self.client.query_one(
                 &format!(
                     r"
-                    SELECT count(*) as cnt_tx FROM banking_stage_results_2.accounts_map_transaction amt
-                    WHERE amt.transaction_id <= {cutoff_transaction}
-                ",
+                        SELECT count(*) as cnt_tx FROM banking_stage_results_2.accounts_map_transaction amt
+                        WHERE amt.transaction_id <= {cutoff_transaction}
+                    ",
                     cutoff_transaction = cutoff_transaction_incl
                 ),
                 &[]).await.unwrap();
@@ -765,9 +765,9 @@ impl PostgresSession {
             let amb_to_delete = self.client.query_one(
                 &format!(
                     r"
-                    SELECT count(*) as cnt_ambs FROM banking_stage_results_2.accounts_map_blocks amb
-                    WHERE amb.slot <= {cutoff_slot}
-                ",
+                        SELECT count(*) as cnt_ambs FROM banking_stage_results_2.accounts_map_blocks amb
+                        WHERE amb.slot <= {cutoff_slot}
+                    ",
                     cutoff_slot = cutoff_slot_excl
                 ),
                 &[]).await.unwrap();
@@ -781,9 +781,9 @@ impl PostgresSession {
             let txi_to_delete = self.client.query_one(
                 &format!(
                     r"
-                    SELECT count(*) as cnt_txis FROM banking_stage_results_2.transaction_infos txi
-                    WHERE txi.processed_slot <= {cutoff_slot}
-                ",
+                        SELECT count(*) as cnt_txis FROM banking_stage_results_2.transaction_infos txi
+                        WHERE txi.processed_slot <= {cutoff_slot}
+                    ",
                     cutoff_slot = cutoff_slot_excl
                 ),
                 &[]).await.unwrap();
@@ -797,9 +797,9 @@ impl PostgresSession {
             let txslot_to_delete = self.client.query_one(
                 &format!(
                     r"
-                    SELECT count(*) as cnt_txslots FROM banking_stage_results_2.transaction_slot tx_slot
-                    WHERE tx_slot.slot <= {cutoff_slot}
-                ",
+                        SELECT count(*) as cnt_txslots FROM banking_stage_results_2.transaction_slot tx_slot
+                        WHERE tx_slot.slot <= {cutoff_slot}
+                    ",
                     cutoff_slot = cutoff_slot_excl
                 ),
                 &[]).await.unwrap();
