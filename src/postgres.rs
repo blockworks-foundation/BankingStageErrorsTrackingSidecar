@@ -692,7 +692,6 @@ impl PostgresSession {
 
 impl PostgresSession {
     pub async fn cleanup_old_data(&self, dry_run: bool) {
-        let result = self.client.execute("SELECT 1", &[]).await.unwrap();
 
         // max slot from blocks table
         let latest_slot = self.client.query_one(
@@ -704,7 +703,7 @@ impl PostgresSession {
 
         // keep 1mio slots (apprx 4 days)
         let slots_to_keep = 1000000;
-        let cutoff_slot = latest_slot - slots_to_keep;
+        let cutoff_slot_excl = latest_slot - slots_to_keep;
 
         let cutoff_transaction = self.client.query_one(
             &format!(
@@ -712,14 +711,14 @@ impl PostgresSession {
                     SELECT max(transaction_id) as transaction_id FROM banking_stage_results_2.transaction_infos
                     WHERE processed_slot < {cutoff_slot}
                 ",
-                cutoff_slot = cutoff_slot
+                cutoff_slot = cutoff_slot_excl
             ),
             &[]).await.unwrap();
 
-        let cutoff_transaction: i64 = cutoff_transaction.get("transaction_id");
+        let cutoff_transaction_incl: i64 = cutoff_transaction.get("transaction_id");
 
-        info!("cutoff slot(incl) from blocks table minus {} slots_to_keep: {}", slots_to_keep, cutoff_slot);
-        info!("cutoff transaction_id(incl) from transaction_infos table: {}", cutoff_transaction);
+        info!("cutoff slot(incl) from blocks table minus {} slots_to_keep: {}", slots_to_keep, cutoff_slot_excl);
+        info!("cutoff transaction_id(incl) from transaction_infos table: {}", cutoff_transaction_incl);
 
         // delete accounts_map_transaction
         {
@@ -729,7 +728,7 @@ impl PostgresSession {
                     SELECT count(*) as cnt_tx FROM banking_stage_results_2.accounts_map_transaction amt
                     WHERE amt.transaction_id <= {cutoff_transaction}
                 ",
-                    cutoff_transaction = cutoff_transaction
+                    cutoff_transaction = cutoff_transaction_incl
                 ),
                 &[]).await.unwrap();
 
@@ -745,7 +744,7 @@ impl PostgresSession {
                     SELECT count(*) as cnt_ambs FROM banking_stage_results_2.accounts_map_blocks amb
                     WHERE amb.slot <= {cutoff_slot}
                 ",
-                    cutoff_slot = cutoff_slot
+                    cutoff_slot = cutoff_slot_excl
                 ),
                 &[]).await.unwrap();
 
@@ -761,7 +760,7 @@ impl PostgresSession {
                     SELECT count(*) as cnt_txis FROM banking_stage_results_2.transaction_infos txi
                     WHERE txi.processed_slot <= {cutoff_slot}
                 ",
-                    cutoff_slot = cutoff_slot
+                    cutoff_slot = cutoff_slot_excl
                 ),
                 &[]).await.unwrap();
 
@@ -777,7 +776,7 @@ impl PostgresSession {
                     SELECT count(*) as cnt_txslots FROM banking_stage_results_2.transaction_slot tx_slot
                     WHERE tx_slot.slot <= {cutoff_slot}
                 ",
-                    cutoff_slot = cutoff_slot
+                    cutoff_slot = cutoff_slot_excl
                 ),
                 &[]).await.unwrap();
 
