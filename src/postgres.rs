@@ -134,7 +134,7 @@ impl PostgresSession {
                 format!(
                     r#"
         CREATE TEMP TABLE {}(
-            signature TEXT
+            signature CHAR(88)
         );
         "#,
                     temp_table
@@ -307,8 +307,8 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            account_key TEXT,
-            signature TEXT,
+            account_key CHAR(44),
+            signature CHAR(88),
             is_writable BOOL,
             is_signer BOOL,
             is_atl BOOL
@@ -381,7 +381,7 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            signature TEXT,
+            signature CHAR(88),
             processed_slot BIGINT,
             is_successful BOOL,
             cu_requested BIGINT,
@@ -693,6 +693,7 @@ impl PostgresSession {
         // save account usage in blocks
         self.save_account_usage_in_block(&block_info).await?;
         self.save_block_info(&block_info).await?;
+        info!("block saved");
         Ok(())
     }
 }
