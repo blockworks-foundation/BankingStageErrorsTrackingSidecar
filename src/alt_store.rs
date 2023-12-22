@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::block_info::TransactionAccount;
 lazy_static::lazy_static! {
     static ref ALTS_IN_STORE: IntGauge =
-       register_int_gauge!(opts!("block_arrived", "block seen with n transactions")).unwrap();
+       register_int_gauge!(opts!("banking_stage_sidecar_alts_stored", "Alts stored in sidecar")).unwrap();
 }
 
 pub struct ALTStore {
