@@ -46,7 +46,7 @@ CREATE TABLE banking_stage_results_2.blocks (
 
 CREATE TABLE banking_stage_results_2.accounts(
 	acc_id bigserial primary key,
-	account_key text,
+	account_key char(44),
 	UNIQUE (account_key)
 );
 
