@@ -676,7 +676,7 @@ impl PostgresSession {
                     .accounts
                     .iter()
                     .map(|acc| AccountUsed {
-                        key: acc.key.clone(),
+                        key: acc.key.to_string(),
                         writable: acc.is_writable,
                         is_signer: acc.is_signer,
                         is_atl: acc.is_alt,

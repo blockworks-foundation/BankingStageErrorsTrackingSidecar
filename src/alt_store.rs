@@ -1,13 +1,10 @@
 use dashmap::DashMap;
 use itertools::Itertools;
-use prometheus::{IntGauge, register_int_gauge, opts};
+use prometheus::{opts, register_int_gauge, IntGauge};
 use solana_address_lookup_table_program::state::AddressLookupTable;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::{
-    commitment_config::CommitmentConfig, pubkey::Pubkey, slot_hashes::SlotHashes,
-    slot_history::Slot,
-};
-use std::sync::Arc;
+use solana_sdk::{account::ReadableAccount, commitment_config::CommitmentConfig, pubkey::Pubkey};
+use std::{sync::Arc, time::Duration};
 
 use crate::block_info::TransactionAccount;
 lazy_static::lazy_static! {
@@ -17,7 +14,7 @@ lazy_static::lazy_static! {
 
 pub struct ALTStore {
     rpc_client: Arc<RpcClient>,
-    pub map: Arc<DashMap<Pubkey, Vec<u8>>>,
+    pub map: Arc<DashMap<Pubkey, Vec<Pubkey>>>,
 }
 
 impl ALTStore {
@@ -41,42 +38,49 @@ impl ALTStore {
             .await;
         if let Ok(account_res) = response {
             if let Some(account) = account_res.value {
-                if self.map.insert(*alt, account.data).is_none() {
+                let lookup_table = AddressLookupTable::deserialize(&account.data()).unwrap();
+                if self
+                    .map
+                    .insert(*alt, lookup_table.addresses.to_vec())
+                    .is_none()
+                {
                     ALTS_IN_STORE.inc();
                 }
+                drop(lookup_table);
             }
         }
     }
 
     pub async fn load_accounts(
         &self,
-        slot: Slot,
         alt: &Pubkey,
         write_accounts: &Vec<u8>,
         read_account: &Vec<u8>,
     ) -> Option<Vec<TransactionAccount>> {
         match self.map.get(&alt) {
-            Some(account) => {
-                let lookup_table = AddressLookupTable::deserialize(&account.value()).unwrap();
-                let write_accounts =
-                    lookup_table.lookup(slot, write_accounts, &SlotHashes::default());
-                let read_account = lookup_table.lookup(slot, read_account, &SlotHashes::default());
-
-                let write_accounts = if let Ok(write_accounts) = write_accounts {
-                    write_accounts
-                } else {
+            Some(lookup_table) => {
+                if write_accounts
+                    .iter()
+                    .any(|x| *x as usize >= lookup_table.len())
+                    || read_account
+                        .iter()
+                        .any(|x| *x as usize >= lookup_table.len())
+                {
                     return None;
-                };
-                let read_account = if let Ok(read_account) = read_account {
-                    read_account
-                } else {
-                    return None;
-                };
+                }
+                let write_accounts = write_accounts
+                    .iter()
+                    .map(|i| lookup_table[*i as usize])
+                    .collect_vec();
+                let read_account = read_account
+                    .iter()
+                    .map(|i| lookup_table[*i as usize])
+                    .collect_vec();
 
                 let wa = write_accounts
                     .iter()
                     .map(|key| TransactionAccount {
-                        key: key.to_string(),
+                        key: key.clone(),
                         is_writable: true,
                         is_signer: false,
                         is_alt: true,
@@ -85,7 +89,7 @@ impl ALTStore {
                 let ra = read_account
                     .iter()
                     .map(|key| TransactionAccount {
-                        key: key.to_string(),
+                        key: key.clone(),
                         is_writable: false,
                         is_signer: false,
                         is_alt: true,
@@ -99,26 +103,20 @@ impl ALTStore {
 
     pub async fn get_accounts(
         &self,
-        current_slot: Slot,
         alt: &Pubkey,
         write_accounts: &Vec<u8>,
         read_account: &Vec<u8>,
     ) -> Vec<TransactionAccount> {
         self.load_alt_from_rpc(&alt).await;
-        match self
-            .load_accounts(current_slot, alt, write_accounts, read_account)
-            .await
-        {
+        match self.load_accounts(alt, write_accounts, read_account).await {
             Some(x) => x,
             None => {
                 //load alt
                 self.reload_alt_from_rpc(&alt).await;
-                match self
-                    .load_accounts(current_slot, alt, write_accounts, read_account)
-                    .await
-                {
+                match self.load_accounts(alt, write_accounts, read_account).await {
                     Some(x) => x,
                     None => {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                         // reloading did not work
                         log::error!("cannot load alt even after");
                         vec![]
