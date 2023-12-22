@@ -134,7 +134,7 @@ impl PostgresSession {
                 format!(
                     r#"
         CREATE TEMP TABLE {}(
-            signature char(88)
+            signature TEXT
         );
         "#,
                     temp_table
@@ -184,7 +184,7 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            key char(44)
+            key TEXT
         );",
                     temp_table
                 )
@@ -231,7 +231,7 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            sig char(88),
+            sig TEXT,
             slot BIGINT,
             error_code INT,
             count INT,
@@ -307,8 +307,8 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            account_key char(44),
-            signature char(88),
+            account_key TEXT,
+            signature TEXT,
             is_writable BOOL,
             is_signer BOOL,
             is_atl BOOL
@@ -381,7 +381,7 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            signature char(88),
+            signature TEXT,
             processed_slot BIGINT,
             is_successful BOOL,
             cu_requested BIGINT,
@@ -470,7 +470,7 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            account_key CHAR(44),
+            account_key TEXT,
             slot BIGINT,
             is_write_locked BOOL,
             total_cu_requested BIGINT,
