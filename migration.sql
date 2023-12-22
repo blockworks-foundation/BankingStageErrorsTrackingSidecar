@@ -120,3 +120,8 @@ VACUUM FULL banking_stage_results_2.blocks;
 -- optional
 CLUSTER banking_stage_results_2.transaction_slot using idx_transaction_slot_timestamp;
 VACUUM FULL banking_stage_results_2.transaction_slot;
+
+ALTER TABLE banking_stage_results_2.transactions ALTER COLUMN signature TYPE TEXT;
+
+CLUSTER banking_stage_results_2.accounts_map_transaction using accounts_map_transaction_pkey;
+
