@@ -44,7 +44,6 @@ lazy_static::lazy_static! {
 pub async fn start_tracking_banking_stage_errors(
     grpc_address: String,
     map_of_infos: Arc<DashMap<(String, u64), TransactionInfo>>,
-    slot_by_errors: Arc<DashMap<u64, u64>>,
     slot: Arc<AtomicU64>,
     _subscribe_to_slots: bool,
 ) {
@@ -104,14 +103,6 @@ pub async fn start_tracking_banking_stage_errors(
                     // }
                     BANKING_STAGE_ERROR_EVENT_COUNT.inc();
                     let sig = transaction.signature.to_string();
-                    match slot_by_errors.get_mut(&transaction.slot) {
-                        Some(mut value) => {
-                            *value += 1;
-                        }
-                        None => {
-                            slot_by_errors.insert(transaction.slot, 1);
-                        }
-                    }
                     match map_of_infos.get_mut(&(sig.clone(), transaction.slot)) {
                         Some(mut x) => {
                             let tx_info = x.value_mut();
@@ -261,7 +252,6 @@ async fn main() {
 
     let grpc_block_addr = args.grpc_address_to_fetch_blocks;
     let map_of_infos = Arc::new(DashMap::<(String, u64), TransactionInfo>::new());
-    let slot_by_errors = Arc::new(DashMap::<u64, u64>::new());
 
     let postgres = postgres::Postgres::new().await;
     let slot = Arc::new(AtomicU64::new(0));
@@ -273,13 +263,11 @@ async fn main() {
         .map(|address| {
             let address = address.clone();
             let map_of_infos = map_of_infos.clone();
-            let slot_by_errors = slot_by_errors.clone();
             let slot = slot.clone();
             tokio::spawn(async move {
                 start_tracking_banking_stage_errors(
                     address,
                     map_of_infos,
-                    slot_by_errors,
                     slot,
                     no_block_subscription,
                 )

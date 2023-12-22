@@ -1,5 +1,6 @@
 use dashmap::DashMap;
 use itertools::Itertools;
+use prometheus::{IntGauge, register_int_gauge, opts};
 use solana_address_lookup_table_program::state::AddressLookupTable;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
@@ -9,6 +10,10 @@ use solana_sdk::{
 use std::sync::Arc;
 
 use crate::block_info::TransactionAccount;
+lazy_static::lazy_static! {
+    static ref ALTS_IN_STORE: IntGauge =
+       register_int_gauge!(opts!("block_arrived", "block seen with n transactions")).unwrap();
+}
 
 pub struct ALTStore {
     rpc_client: Arc<RpcClient>,
@@ -36,7 +41,9 @@ impl ALTStore {
             .await;
         if let Ok(account_res) = response {
             if let Some(account) = account_res.value {
-                self.map.insert(*alt, account.data);
+                if self.map.insert(*alt, account.data).is_none() {
+                    ALTS_IN_STORE.inc();
+                }
             }
         }
     }
