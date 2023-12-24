@@ -112,7 +112,7 @@ pub struct BlockInfo {
 
 impl BlockInfo {
     pub async fn process_versioned_message(
-        _atl_store: Arc<ALTStore>,
+        atl_store: Arc<ALTStore>,
         signature: String,
         slot: Slot,
         message: &VersionedMessage,
@@ -184,19 +184,19 @@ impl BlockInfo {
                     is_alt: false,
                 })
                 .collect_vec();
-            // if let Some(atl_messages) = message.address_table_lookups() {
-            //     for atl_message in atl_messages {
-            //         let atl_acc = atl_message.account_key;
-            //         let mut atl_accs = atl_store
-            //             .get_accounts(
-            //                 &atl_acc,
-            //                 &atl_message.writable_indexes,
-            //                 &atl_message.readonly_indexes,
-            //             )
-            //             .await;
-            //         accounts.append(&mut atl_accs);
-            //     }
-            // }
+            if let Some(atl_messages) = message.address_table_lookups() {
+                for atl_message in atl_messages {
+                    let atl_acc = atl_message.account_key;
+                    let mut atl_accs = atl_store
+                        .get_accounts(
+                            &atl_acc,
+                            &atl_message.writable_indexes,
+                            &atl_message.readonly_indexes,
+                        )
+                        .await;
+                    accounts.append(&mut atl_accs);
+                }
+            }
 
             for writable_account in accounts
                 .iter()

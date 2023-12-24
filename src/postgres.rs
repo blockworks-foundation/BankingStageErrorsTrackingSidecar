@@ -134,7 +134,7 @@ impl PostgresSession {
                 format!(
                     r#"
         CREATE TEMP TABLE {}(
-            signature CHAR(88)
+            signature text
         );
         "#,
                     temp_table
@@ -307,8 +307,8 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            account_key CHAR(44),
-            signature CHAR(88),
+            account_key text,
+            signature text,
             is_writable BOOL,
             is_signer BOOL,
             is_atl BOOL
@@ -381,7 +381,7 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            signature CHAR(88),
+            signature text,
             processed_slot BIGINT,
             is_successful BOOL,
             cu_requested BIGINT,
