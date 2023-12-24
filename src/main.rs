@@ -144,7 +144,7 @@ async fn start_tracking_blocks(
     )
     .unwrap();
     let atl_store = Arc::new(alt_store::ALTStore::new(rpc_client));
-
+    atl_store.load_all_alts().await;
     loop {
         let mut blocks_subs = HashMap::new();
         blocks_subs.insert(

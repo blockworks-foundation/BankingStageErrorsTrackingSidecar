@@ -25,6 +25,27 @@ impl ALTStore {
         }
     }
 
+    pub async fn load_all_alts(&self) {
+        let get_pa = self.rpc_client.get_program_accounts(&solana_address_lookup_table_program::id()).await;
+        if let Ok(pas) = get_pa {
+            for (key, acc) in pas {
+                self.save_account(&key, acc.data());
+            }
+        }
+    }
+
+    pub fn save_account(&self, address: &Pubkey, data: &[u8]) {
+        let lookup_table = AddressLookupTable::deserialize(&data).unwrap();
+        if self
+            .map
+            .insert(address.clone(), lookup_table.addresses.to_vec())
+            .is_none()
+        {
+            ALTS_IN_STORE.inc();
+        }
+        drop(lookup_table);
+    }
+
     pub async fn load_alt_from_rpc(&self, alt: &Pubkey) {
         if !self.map.contains_key(&alt) {
             self.reload_alt_from_rpc(&alt).await;
@@ -38,15 +59,7 @@ impl ALTStore {
             .await;
         if let Ok(account_res) = response {
             if let Some(account) = account_res.value {
-                let lookup_table = AddressLookupTable::deserialize(&account.data()).unwrap();
-                if self
-                    .map
-                    .insert(*alt, lookup_table.addresses.to_vec())
-                    .is_none()
-                {
-                    ALTS_IN_STORE.inc();
-                }
-                drop(lookup_table);
+                self.save_account(alt, account.data());
             }
         }
     }
