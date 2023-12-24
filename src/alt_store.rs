@@ -26,7 +26,10 @@ impl ALTStore {
     }
 
     pub async fn load_all_alts(&self) {
-        let get_pa = self.rpc_client.get_program_accounts(&solana_address_lookup_table_program::id()).await;
+        let get_pa = self
+            .rpc_client
+            .get_program_accounts(&solana_address_lookup_table_program::id())
+            .await;
         if let Ok(pas) = get_pa {
             for (key, acc) in pas {
                 self.save_account(&key, acc.data());

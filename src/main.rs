@@ -1,6 +1,5 @@
 use clap::Parser;
 use itertools::Itertools;
-use solana_address_lookup_table_program::state::AddressLookupTable;
 use solana_rpc_client::nonblocking::rpc_client::{self, RpcClient};
 use solana_sdk::pubkey::Pubkey;
 use std::{
@@ -231,9 +230,7 @@ async fn start_tracking_blocks(
                     if let Some(account) = account_update.account {
                         let bytes: [u8; 32] = account.pubkey.try_into().unwrap_or(Pubkey::default().to_bytes());
                         let pubkey = Pubkey::new_from_array(bytes);
-                        let lookup_table = AddressLookupTable::deserialize(&account.data).unwrap();
-                        atl_store.map.insert( pubkey, lookup_table.addresses.to_vec());
-                        drop(lookup_table);
+                        atl_store.save_account(&pubkey, &account.data);
                     }
                 },
                 _ => {}
