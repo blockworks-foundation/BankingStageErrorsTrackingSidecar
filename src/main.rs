@@ -7,6 +7,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
+use tokio::io::AsyncReadExt;
 
 use crate::prometheus_sync::PrometheusSync;
 use block_info::BlockInfo;
@@ -88,7 +89,7 @@ pub async fn start_tracking_banking_stage_errors(
             tokio::time::timeout(Duration::from_secs(30), geyser_stream.next()).await
         {
             let Ok(message) = message else {
-            continue;
+                continue;
             };
 
             let Some(update) = message.update_oneof else {
@@ -135,6 +136,7 @@ async fn start_tracking_blocks(
     grpc_x_token: Option<String>,
     postgres: postgres::Postgres,
     slot: Arc<AtomicU64>,
+    alts_list: Vec<String>,
 ) {
     let mut client = yellowstone_grpc_client_original::GeyserGrpcClient::connect(
         grpc_block_addr,
@@ -143,7 +145,7 @@ async fn start_tracking_blocks(
     )
     .unwrap();
     let atl_store = Arc::new(alt_store::ALTStore::new(rpc_client));
-    atl_store.load_all_alts().await;
+    atl_store.load_all_alts(alts_list).await;
     loop {
         let mut blocks_subs = HashMap::new();
         blocks_subs.insert(
@@ -192,12 +194,12 @@ async fn start_tracking_blocks(
             tokio::time::timeout(Duration::from_secs(30), geyser_stream.next()).await
         {
             let Ok(message) = message else {
-                    continue;
-                };
+                continue;
+            };
 
             let Some(update) = message.update_oneof else {
-                    continue;
-                };
+                continue;
+            };
 
             match update {
                 yellowstone_grpc_proto_original::prelude::subscribe_update::UpdateOneof::Block(
@@ -242,7 +244,7 @@ async fn start_tracking_blocks(
 }
 
 #[tokio::main()]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
@@ -256,6 +258,17 @@ async fn main() {
     let postgres = postgres::Postgres::new().await;
     let slot = Arc::new(AtomicU64::new(0));
     let no_block_subscription = grpc_block_addr.is_none();
+    let alts = args.alts;
+
+    //load alts from the file
+    let mut alts_string = String::new();
+    let mut alts_file = tokio::fs::File::open(alts).await?;
+    alts_file.read_to_string(&mut alts_string).await?;
+    let alts_list = alts_string
+        .split("\r\n")
+        .map(|x| x.to_string())
+        .collect_vec();
+
     postgres.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());
     let jhs = args
         .banking_grpc_addresses
@@ -282,8 +295,10 @@ async fn main() {
             args.grpc_x_token,
             postgres,
             slot,
+            alts_list,
         )
         .await;
     }
     futures::future::join_all(jhs).await;
+    Ok(())
 }

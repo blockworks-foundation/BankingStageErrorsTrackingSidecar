@@ -4,7 +4,7 @@ use prometheus::{opts, register_int_gauge, IntGauge};
 use solana_address_lookup_table_program::state::AddressLookupTable;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{account::ReadableAccount, commitment_config::CommitmentConfig, pubkey::Pubkey};
-use std::{sync::Arc, time::Duration};
+use std::{str::FromStr, sync::Arc, time::Duration};
 
 use crate::block_info::TransactionAccount;
 lazy_static::lazy_static! {
@@ -12,6 +12,7 @@ lazy_static::lazy_static! {
        register_int_gauge!(opts!("banking_stage_sidecar_alts_stored", "Alts stored in sidecar")).unwrap();
 }
 
+#[derive(Clone)]
 pub struct ALTStore {
     rpc_client: Arc<RpcClient>,
     pub map: Arc<DashMap<Pubkey, Vec<Pubkey>>>,
@@ -25,16 +26,38 @@ impl ALTStore {
         }
     }
 
-    pub async fn load_all_alts(&self) {
-        let get_pa = self
-            .rpc_client
-            .get_program_accounts(&solana_address_lookup_table_program::id())
-            .await;
-        if let Ok(pas) = get_pa {
-            for (key, acc) in pas {
-                self.save_account(&key, acc.data());
-            }
+    pub async fn load_all_alts(&self, alts_list: Vec<String>) {
+        let alts_list = alts_list
+            .iter()
+            .map(|x| x.trim())
+            .filter(|x| x.len() > 0)
+            .map(|x| Pubkey::from_str(&x).unwrap())
+            .collect_vec();
+        log::info!("Preloading {} ALTs", alts_list.len());
+        for batches in alts_list.chunks(1000).map(|x| x.to_vec()) {
+            let tasks = batches.chunks(10).map(|batch| {
+                let batch = batch.to_vec();
+                let rpc_client = self.rpc_client.clone();
+                let this = self.clone();
+                tokio::spawn(async move {
+                    if let Ok(multiple_accounts) = rpc_client
+                        .get_multiple_accounts_with_commitment(
+                            &batch,
+                            CommitmentConfig::processed(),
+                        )
+                        .await
+                    {
+                        for (index, acc) in multiple_accounts.value.iter().enumerate() {
+                            if let Some(acc) = acc {
+                                this.save_account(&batch[index], &acc.data);
+                            }
+                        }
+                    }
+                })
+            });
+            futures::future::join_all(tasks).await;
         }
+        log::info!("Finished Loading {} ALTs", alts_list.len());
     }
 
     pub fn save_account(&self, address: &Pubkey, data: &[u8]) {
