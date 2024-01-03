@@ -4,8 +4,12 @@ use solana_rpc_client::nonblocking::rpc_client::{self, RpcClient};
 use solana_sdk::pubkey::Pubkey;
 use std::{
     collections::HashMap,
-    sync::{atomic::{AtomicU64, AtomicBool}, Arc},
-    time::Duration, str::FromStr,
+    str::FromStr,
+    sync::{
+        atomic::{AtomicBool, AtomicU64},
+        Arc,
+    },
+    time::Duration,
 };
 use tokio::io::AsyncReadExt;
 
@@ -138,7 +142,7 @@ async fn start_tracking_blocks(
     slot: Arc<AtomicU64>,
     alts_list: Vec<Pubkey>,
 ) {
-    let block_counter =  Arc::new(AtomicU64::new(0));
+    let block_counter = Arc::new(AtomicU64::new(0));
     let restart_block_subscription = Arc::new(AtomicBool::new(false));
     let _block_counter_checker = {
         let block_counter = block_counter.clone();
@@ -149,7 +153,9 @@ async fn start_tracking_blocks(
                 tokio::time::sleep(Duration::from_secs(20)).await;
                 let new_count = block_counter.load(std::sync::atomic::Ordering::Relaxed);
                 if old_count > 0 && old_count == new_count {
-                    log::error!("Did not recieve any block for 20 s, restarting block subscription");
+                    log::error!(
+                        "Did not recieve any block for 20 s, restarting block subscription"
+                    );
                     restart_block_subscription.store(true, std::sync::atomic::Ordering::Relaxed);
                     tokio::time::sleep(Duration::from_secs(10)).await;
                 }

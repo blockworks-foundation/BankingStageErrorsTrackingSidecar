@@ -13,7 +13,10 @@ use solana_sdk::{
     signature::Signature,
     slot_history::Slot,
 };
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 #[derive(Serialize, Debug, Clone)]
 pub struct PrioFeeData {
@@ -22,7 +25,7 @@ pub struct PrioFeeData {
     pub p75: Option<u64>,
     pub p90: Option<u64>,
     pub p95: Option<u64>,
-    pub med: Option<u64>, 
+    pub med: Option<u64>,
 }
 
 impl PrioFeeData {
@@ -286,18 +289,18 @@ impl BlockInfo {
     }
 
     pub fn calculate_supp_info(
-        prio_fees_in_block: &mut Vec<(u64, u64)>
+        prio_fees_in_block: &mut Vec<(u64, u64)>,
     ) -> Option<PrioritizationFeesInfo> {
         if !prio_fees_in_block.is_empty() {
             // get stats by transaction
-            prio_fees_in_block.sort_by(|a,b| a.0.cmp(&b.0));
+            prio_fees_in_block.sort_by(|a, b| a.0.cmp(&b.0));
             let median_index = prio_fees_in_block.len() / 2;
             let p75_index = prio_fees_in_block.len() * 75 / 100;
             let p90_index = prio_fees_in_block.len() * 90 / 100;
             let p_min = prio_fees_in_block[0].0;
             let p_median = prio_fees_in_block[median_index].0;
             let p_75 = prio_fees_in_block[p75_index].0;
-            let p_90 =  prio_fees_in_block[p90_index].0;
+            let p_90 = prio_fees_in_block[p90_index].0;
             let p_max = prio_fees_in_block.last().map(|x| x.0).unwrap_or_default();
 
             let mut med_cu = None;
@@ -305,18 +308,18 @@ impl BlockInfo {
             let mut p90_cu = None;
             let mut p95_cu = None;
 
-            // get stats by CU           
-            let cu_sum : u64 = prio_fees_in_block.iter().map(|x| x.1).sum();
+            // get stats by CU
+            let cu_sum: u64 = prio_fees_in_block.iter().map(|x| x.1).sum();
             let mut agg: u64 = 0;
             for (prio, cu) in prio_fees_in_block {
                 agg = agg + *cu;
-                if med_cu.is_none() && agg > (cu_sum as f64  * 0.5) as u64 {
+                if med_cu.is_none() && agg > (cu_sum as f64 * 0.5) as u64 {
                     med_cu = Some(*prio);
-                } else if p75_cu.is_none() && agg > (cu_sum as f64  * 0.75) as u64 {
+                } else if p75_cu.is_none() && agg > (cu_sum as f64 * 0.75) as u64 {
                     p75_cu = Some(*prio)
-                } else if p90_cu.is_none() && agg > (cu_sum as f64  * 0.9) as u64 {
+                } else if p90_cu.is_none() && agg > (cu_sum as f64 * 0.9) as u64 {
                     p90_cu = Some(*prio);
-                } else if p95_cu.is_none() && agg > (cu_sum as f64  * 0.95) as u64 {
+                } else if p95_cu.is_none() && agg > (cu_sum as f64 * 0.95) as u64 {
                     p95_cu = Some(*prio)
                 }
             }
@@ -444,7 +447,9 @@ impl BlockInfo {
                     .collect(),
             });
             let atl_store = atl_store.clone();
-            atl_store.load_all_alts(lookup_tables.iter().cloned().collect_vec()).await;
+            atl_store
+                .load_all_alts(lookup_tables.iter().cloned().collect_vec())
+                .await;
 
             let transaction = Self::process_versioned_message(
                 atl_store,

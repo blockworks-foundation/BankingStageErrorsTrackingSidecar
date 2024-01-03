@@ -4,8 +4,8 @@ use prometheus::{opts, register_int_gauge, IntGauge};
 use solana_address_lookup_table_program::state::AddressLookupTable;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{account::ReadableAccount, commitment_config::CommitmentConfig, pubkey::Pubkey};
-use tokio::sync::RwLock;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use crate::block_info::TransactionAccount;
 lazy_static::lazy_static! {
@@ -17,7 +17,7 @@ lazy_static::lazy_static! {
 pub struct ALTStore {
     rpc_client: Arc<RpcClient>,
     pub map: Arc<DashMap<Pubkey, Vec<Pubkey>>>,
-    is_loading : Arc<DashMap<Pubkey, Arc<tokio::sync::RwLock<()>>>>,
+    is_loading: Arc<DashMap<Pubkey, Arc<tokio::sync::RwLock<()>>>>,
 }
 
 impl ALTStore {
@@ -46,7 +46,7 @@ impl ALTStore {
             let lock = Arc::new(RwLock::new(()));
             // add in loading list
             batches.iter().for_each(|x| {
-                self.is_loading.insert( x.clone(), lock.clone());
+                self.is_loading.insert(x.clone(), lock.clone());
             });
             let _context = lock.write().await;
             let tasks = batches.chunks(10).map(|batch| {
@@ -163,7 +163,7 @@ impl ALTStore {
                 let x = x.value().clone();
                 log::debug!("waiting for alt {}", alt.to_string());
                 let _ = x.read().await;
-            },
+            }
             None => {
                 // not loading
             }
