@@ -4,8 +4,8 @@ use solana_rpc_client::nonblocking::rpc_client::{self, RpcClient};
 use solana_sdk::pubkey::Pubkey;
 use std::{
     collections::HashMap,
-    sync::{atomic::AtomicU64, Arc},
-    time::Duration,
+    sync::{atomic::{AtomicU64, AtomicBool}, Arc},
+    time::Duration, str::FromStr,
 };
 use tokio::io::AsyncReadExt;
 
@@ -136,8 +136,28 @@ async fn start_tracking_blocks(
     grpc_x_token: Option<String>,
     postgres: postgres::Postgres,
     slot: Arc<AtomicU64>,
-    alts_list: Vec<String>,
+    alts_list: Vec<Pubkey>,
 ) {
+    let block_counter =  Arc::new(AtomicU64::new(0));
+    let restart_block_subscription = Arc::new(AtomicBool::new(false));
+    let _block_counter_checker = {
+        let block_counter = block_counter.clone();
+        let restart_block_subscription = restart_block_subscription.clone();
+        tokio::spawn(async move {
+            let mut old_count = block_counter.load(std::sync::atomic::Ordering::Relaxed);
+            loop {
+                tokio::time::sleep(Duration::from_secs(20)).await;
+                let new_count = block_counter.load(std::sync::atomic::Ordering::Relaxed);
+                if old_count > 0 && old_count == new_count {
+                    log::error!("Did not recieve any block for 20 s, restarting block subscription");
+                    restart_block_subscription.store(true, std::sync::atomic::Ordering::Relaxed);
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                }
+                old_count = new_count;
+            }
+        })
+    };
+
     let mut client = yellowstone_grpc_client_original::GeyserGrpcClient::connect(
         grpc_block_addr,
         grpc_x_token,
@@ -146,6 +166,7 @@ async fn start_tracking_blocks(
     .unwrap();
     let atl_store = Arc::new(alt_store::ALTStore::new(rpc_client));
     atl_store.load_all_alts(alts_list).await;
+
     loop {
         let mut blocks_subs = HashMap::new();
         blocks_subs.insert(
@@ -193,6 +214,10 @@ async fn start_tracking_blocks(
         while let Ok(Some(message)) =
             tokio::time::timeout(Duration::from_secs(30), geyser_stream.next()).await
         {
+            if restart_block_subscription.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+
             let Ok(message) = message else {
                 continue;
             };
@@ -200,7 +225,7 @@ async fn start_tracking_blocks(
             let Some(update) = message.update_oneof else {
                 continue;
             };
-
+            block_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             match update {
                 yellowstone_grpc_proto_original::prelude::subscribe_update::UpdateOneof::Block(
                     block,
@@ -238,6 +263,7 @@ async fn start_tracking_blocks(
                 _ => {}
             };
         }
+        restart_block_subscription.store(false, std::sync::atomic::Ordering::Relaxed);
         log::error!("geyser block stream is broken, retrying");
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
@@ -266,7 +292,9 @@ async fn main() -> anyhow::Result<()> {
     alts_file.read_to_string(&mut alts_string).await?;
     let alts_list = alts_string
         .split("\r\n")
-        .map(|x| x.to_string())
+        .map(|x| x.trim().to_string())
+        .filter(|x| x.len() > 0)
+        .map(|x| Pubkey::from_str(&x).unwrap())
         .collect_vec();
 
     postgres.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());

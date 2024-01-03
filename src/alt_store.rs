@@ -4,7 +4,8 @@ use prometheus::{opts, register_int_gauge, IntGauge};
 use solana_address_lookup_table_program::state::AddressLookupTable;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{account::ReadableAccount, commitment_config::CommitmentConfig, pubkey::Pubkey};
-use std::{str::FromStr, sync::Arc, time::Duration};
+use tokio::sync::RwLock;
+use std::sync::Arc;
 
 use crate::block_info::TransactionAccount;
 lazy_static::lazy_static! {
@@ -16,6 +17,7 @@ lazy_static::lazy_static! {
 pub struct ALTStore {
     rpc_client: Arc<RpcClient>,
     pub map: Arc<DashMap<Pubkey, Vec<Pubkey>>>,
+    is_loading : Arc<DashMap<Pubkey, Arc<tokio::sync::RwLock<()>>>>,
 }
 
 impl ALTStore {
@@ -23,18 +25,30 @@ impl ALTStore {
         Self {
             rpc_client,
             map: Arc::new(DashMap::new()),
+            is_loading: Arc::new(DashMap::new()),
         }
     }
 
-    pub async fn load_all_alts(&self, alts_list: Vec<String>) {
+    pub async fn load_all_alts(&self, alts_list: Vec<Pubkey>) {
         let alts_list = alts_list
             .iter()
-            .map(|x| x.trim())
-            .filter(|x| x.len() > 0)
-            .map(|x| Pubkey::from_str(&x).unwrap())
+            .filter(|x| self.map.contains_key(&x) || self.is_loading.contains_key(&x))
+            .cloned()
             .collect_vec();
+
+        if alts_list.is_empty() {
+            return;
+        }
+
         log::info!("Preloading {} ALTs", alts_list.len());
+
         for batches in alts_list.chunks(1000).map(|x| x.to_vec()) {
+            let lock = Arc::new(RwLock::new(()));
+            // add in loading list
+            batches.iter().for_each(|x| {
+                self.is_loading.insert( x.clone(), lock.clone());
+            });
+            let _context = lock.write().await;
             let tasks = batches.chunks(10).map(|batch| {
                 let batch = batch.to_vec();
                 let rpc_client = self.rpc_client.clone();
@@ -72,13 +86,10 @@ impl ALTStore {
         drop(lookup_table);
     }
 
-    pub async fn load_alt_from_rpc(&self, alt: &Pubkey) {
-        if !self.map.contains_key(&alt) {
-            self.reload_alt_from_rpc(&alt).await;
-        }
-    }
-
     pub async fn reload_alt_from_rpc(&self, alt: &Pubkey) {
+        let lock = Arc::new(RwLock::new(()));
+        let _ = lock.write().await;
+        self.is_loading.insert(alt.clone(), lock.clone());
         let response = self
             .rpc_client
             .get_account_with_commitment(alt, CommitmentConfig::processed())
@@ -146,7 +157,17 @@ impl ALTStore {
         write_accounts: &Vec<u8>,
         read_account: &Vec<u8>,
     ) -> Vec<TransactionAccount> {
-        self.load_alt_from_rpc(&alt).await;
+        match self.is_loading.get(&alt) {
+            Some(x) => {
+                // if there is a lock we wait until it is fullfilled
+                let x = x.value().clone();
+                log::debug!("waiting for alt {}", alt.to_string());
+                let _ = x.read().await;
+            },
+            None => {
+                // not loading
+            }
+        }
         match self.load_accounts(alt, write_accounts, read_account).await {
             Some(x) => x,
             None => {
@@ -155,7 +176,6 @@ impl ALTStore {
                 match self.load_accounts(alt, write_accounts, read_account).await {
                     Some(x) => x,
                     None => {
-                        tokio::time::sleep(Duration::from_millis(500)).await;
                         // reloading did not work
                         log::error!("cannot load alt even after");
                         vec![]
