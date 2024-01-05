@@ -817,35 +817,50 @@ impl PostgresSession {
             cutoff_transaction_incl
         );
 
-        // delete accounts_map_transaction
         {
-            let tx_to_delete = self.client.query_one(
+            let txs_to_delete = self.client.query_one(
                 &format!(
                     r"
-                        SELECT count(*) as cnt_tx FROM banking_stage_results_2.accounts_map_transaction amt
+                        SELECT count(*) as cnt_tx FROM banking_stage_results_2.transactions txs
+                        WHERE txs.transaction_id <= {cutoff_transaction}
+                    ",
+                    cutoff_transaction = cutoff_transaction_incl
+                ),
+                &[]).await.unwrap();
+
+            let txs_to_delete: i64 = txs_to_delete.get("cnt_tx");
+
+            info!("would delete transactions: {}", txs_to_delete);
+        }
+
+        {
+            let amt_to_delete = self.client.query_one(
+                &format!(
+                    r"
+                        SELECT count(*) as cnt_amt FROM banking_stage_results_2.accounts_map_transaction amt
                         WHERE amt.transaction_id <= {cutoff_transaction}
                     ",
                     cutoff_transaction = cutoff_transaction_incl
                 ),
                 &[]).await.unwrap();
 
-            let tx_to_delete: i64 = tx_to_delete.get("cnt_tx");
+            let amt_to_delete: i64 = amt_to_delete.get("cnt_amt");
 
-            info!("would delete transactions: {}", tx_to_delete);
+            info!("would delete accounts_map_transaction: {}", amt_to_delete);
         }
 
         {
             let amb_to_delete = self.client.query_one(
                 &format!(
                     r"
-                        SELECT count(*) as cnt_ambs FROM banking_stage_results_2.accounts_map_blocks amb
+                        SELECT count(*) as cnt_amb FROM banking_stage_results_2.accounts_map_blocks amb
                         WHERE amb.slot < {cutoff_slot}
                     ",
                     cutoff_slot = cutoff_slot_excl
                 ),
                 &[]).await.unwrap();
 
-            let amb_to_delete: i64 = amb_to_delete.get("cnt_ambs");
+            let amb_to_delete: i64 = amb_to_delete.get("cnt_amb");
 
             info!("would delete from accounts_map_blocks: {}", amb_to_delete);
         }
@@ -896,7 +911,7 @@ impl PostgresSession {
                 ", transaction_id = cutoff_transaction_incl
                 ), &[]).await.unwrap();
             info!(
-                "Deleted {} rows from transactions in {:.2}ms",
+                "Deleted {} rows from transactions in {:.3}s",
                 deleted_rows,
                 started.elapsed().as_secs_f32()
             );
@@ -910,7 +925,21 @@ impl PostgresSession {
                 ", transaction_id = cutoff_transaction_incl
                 ), &[]).await.unwrap();
             info!(
-                "Deleted {} rows from accounts_map_transaction in {:.2}ms",
+                "Deleted {} rows from accounts_map_transaction in {:.3}s",
+                deleted_rows,
+                started.elapsed().as_secs_f32()
+            );
+        }
+        {
+            let started = Instant::now();
+            let deleted_rows = self.client.execute(
+                &format!(
+                    r"
+                    DELETE FROM banking_stage_results_2.accounts_map_blocks WHERE slot <= {cutoff_slot}
+                ", cutoff_slot = cutoff_slot_excl
+                ), &[]).await.unwrap();
+            info!(
+                "Deleted {} rows from accounts_map_blocks in {:.3}s",
                 deleted_rows,
                 started.elapsed().as_secs_f32()
             );
@@ -924,7 +953,7 @@ impl PostgresSession {
                 ", cutoff_slot = cutoff_slot_excl
                 ), &[]).await.unwrap();
             info!(
-                "Deleted {} rows from transaction_infos in {:.2}ms",
+                "Deleted {} rows from transaction_infos in {:.3}s",
                 deleted_rows,
                 started.elapsed().as_secs_f32()
             );
@@ -945,7 +974,7 @@ impl PostgresSession {
                 .await
                 .unwrap();
             info!(
-                "Deleted {} rows from transaction_slot in {:.2}ms",
+                "Deleted {} rows from transaction_slot in {:.3}s",
                 deleted_rows,
                 started.elapsed().as_secs_f32()
             );
@@ -962,6 +991,8 @@ impl PostgresSession {
             self.log_rowcount(Level::Info, "transaction_infos").await;
             self.log_rowcount(Level::Info, "transaction_slot").await;
         }
+
+        info!("Cleanup job completed.");
     }
 
     async fn log_rowcount(&self, level: Level, table: &str) {
