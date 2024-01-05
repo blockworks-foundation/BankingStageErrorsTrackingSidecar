@@ -13,7 +13,10 @@ use solana_sdk::{
     signature::Signature,
     slot_history::Slot,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 #[derive(Serialize, Debug, Clone)]
 pub struct PrioFeeData {
@@ -76,11 +79,16 @@ pub struct PrioritizationFeesInfo {
     pub p_75: u64,
     pub p_90: u64,
     pub p_max: u64,
+
+    pub med_cu: Option<u64>,
+    pub p75_cu: Option<u64>,
+    pub p90_cu: Option<u64>,
+    pub p95_cu: Option<u64>,
 }
 
 #[derive(Clone)]
 pub struct TransactionAccount {
-    pub key: String,
+    pub key: Pubkey,
     pub is_writable: bool,
     pub is_signer: bool,
     pub is_alt: bool,
@@ -116,9 +124,9 @@ impl BlockInfo {
         signature: String,
         slot: Slot,
         message: &VersionedMessage,
-        prio_fees_in_block: &mut Vec<u64>,
-        writelocked_accounts: &mut HashMap<String, AccountData>,
-        readlocked_accounts: &mut HashMap<String, AccountData>,
+        prio_fees_in_block: &mut Vec<(u64, u64)>,
+        writelocked_accounts: &mut HashMap<Pubkey, AccountData>,
+        readlocked_accounts: &mut HashMap<Pubkey, AccountData>,
         cu_consumed: u64,
         total_cu_requested: &mut u64,
         is_vote: bool,
@@ -168,7 +176,7 @@ impl BlockInfo {
             (cu_request, prio_fees, nb_ix_except_cb)
         };
         let prioritization_fees = prio_fees.unwrap_or_default();
-        prio_fees_in_block.push(prioritization_fees);
+        prio_fees_in_block.push((prioritization_fees, cu_consumed));
         let cu_requested =
             std::cmp::min(1_400_000, cu_requested.unwrap_or(200000 * nb_ix_except_cb));
         *total_cu_requested += cu_requested;
@@ -178,7 +186,7 @@ impl BlockInfo {
                 .iter()
                 .enumerate()
                 .map(|(index, account)| TransactionAccount {
-                    key: account.to_string(),
+                    key: account.clone(),
                     is_writable: message.is_maybe_writable(index),
                     is_signer: message.is_signer(index),
                     is_alt: false,
@@ -189,7 +197,6 @@ impl BlockInfo {
                     let atl_acc = atl_message.account_key;
                     let mut atl_accs = atl_store
                         .get_accounts(
-                            slot,
                             &atl_acc,
                             &atl_message.writable_indexes,
                             &atl_message.readonly_indexes,
@@ -214,7 +221,7 @@ impl BlockInfo {
                         writelocked_accounts.insert(
                             writable_account.clone(),
                             AccountData {
-                                key: writable_account,
+                                key: writable_account.to_string(),
                                 cu_consumed,
                                 cu_requested,
                                 vec_pf: vec![prioritization_fees],
@@ -239,7 +246,7 @@ impl BlockInfo {
                         readlocked_accounts.insert(
                             readable_account.clone(),
                             AccountData {
-                                key: readable_account,
+                                key: readable_account.to_string(),
                                 cu_consumed,
                                 cu_requested,
                                 vec_pf: vec![prioritization_fees],
@@ -265,8 +272,8 @@ impl BlockInfo {
     }
 
     pub fn calculate_account_usage(
-        writelocked_accounts: &HashMap<String, AccountData>,
-        readlocked_accounts: &HashMap<String, AccountData>,
+        writelocked_accounts: &HashMap<Pubkey, AccountData>,
+        readlocked_accounts: &HashMap<Pubkey, AccountData>,
     ) -> Vec<AccountUsage> {
         let mut accounts = writelocked_accounts
             .iter()
@@ -282,19 +289,51 @@ impl BlockInfo {
     }
 
     pub fn calculate_supp_info(
-        prio_fees_in_block: &mut Vec<u64>,
+        prio_fees_in_block: &mut Vec<(u64, u64)>,
     ) -> Option<PrioritizationFeesInfo> {
         if !prio_fees_in_block.is_empty() {
-            prio_fees_in_block.sort();
+            // get stats by transaction
+            prio_fees_in_block.sort_by(|a, b| a.0.cmp(&b.0));
             let median_index = prio_fees_in_block.len() / 2;
             let p75_index = prio_fees_in_block.len() * 75 / 100;
             let p90_index = prio_fees_in_block.len() * 90 / 100;
+            let p_min = prio_fees_in_block[0].0;
+            let p_median = prio_fees_in_block[median_index].0;
+            let p_75 = prio_fees_in_block[p75_index].0;
+            let p_90 = prio_fees_in_block[p90_index].0;
+            let p_max = prio_fees_in_block.last().map(|x| x.0).unwrap_or_default();
+
+            let mut med_cu = None;
+            let mut p75_cu = None;
+            let mut p90_cu = None;
+            let mut p95_cu = None;
+
+            // get stats by CU
+            let cu_sum: u64 = prio_fees_in_block.iter().map(|x| x.1).sum();
+            let mut agg: u64 = 0;
+            for (prio, cu) in prio_fees_in_block {
+                agg = agg + *cu;
+                if med_cu.is_none() && agg > (cu_sum as f64 * 0.5) as u64 {
+                    med_cu = Some(*prio);
+                } else if p75_cu.is_none() && agg > (cu_sum as f64 * 0.75) as u64 {
+                    p75_cu = Some(*prio)
+                } else if p90_cu.is_none() && agg > (cu_sum as f64 * 0.9) as u64 {
+                    p90_cu = Some(*prio);
+                } else if p95_cu.is_none() && agg > (cu_sum as f64 * 0.95) as u64 {
+                    p95_cu = Some(*prio)
+                }
+            }
+
             Some(PrioritizationFeesInfo {
-                p_min: prio_fees_in_block[0],
-                p_median: prio_fees_in_block[median_index],
-                p_75: prio_fees_in_block[p75_index],
-                p_90: prio_fees_in_block[p90_index],
-                p_max: prio_fees_in_block.last().cloned().unwrap_or_default(),
+                p_min,
+                p_median,
+                p_75,
+                p_90,
+                p_max,
+                med_cu,
+                p75_cu,
+                p90_cu,
+                p95_cu,
             })
         } else {
             None
@@ -335,11 +374,12 @@ impl BlockInfo {
                     .unwrap_or(0)
             })
             .sum::<u64>() as i64;
-        let mut writelocked_accounts: HashMap<String, AccountData> = HashMap::new();
-        let mut readlocked_accounts: HashMap<String, AccountData> = HashMap::new();
+        let mut writelocked_accounts: HashMap<Pubkey, AccountData> = HashMap::new();
+        let mut readlocked_accounts: HashMap<Pubkey, AccountData> = HashMap::new();
         let mut total_cu_requested: u64 = 0;
         let mut prio_fees_in_block = vec![];
         let mut block_transactions = vec![];
+        let mut lookup_tables = HashSet::new();
         for transaction in &block.transactions {
             let Some(tx) = &transaction.transaction else {
                 continue;
@@ -396,8 +436,10 @@ impl BlockInfo {
                             .account_key
                             .try_into()
                             .unwrap_or(Pubkey::default().to_bytes());
+                        let account_key = Pubkey::new_from_array(bytes);
+                        lookup_tables.insert(account_key.clone());
                         MessageAddressTableLookup {
-                            account_key: Pubkey::new_from_array(bytes),
+                            account_key,
                             writable_indexes: table.writable_indexes,
                             readonly_indexes: table.readonly_indexes,
                         }
@@ -405,6 +447,9 @@ impl BlockInfo {
                     .collect(),
             });
             let atl_store = atl_store.clone();
+            atl_store
+                .load_all_alts(lookup_tables.iter().cloned().collect_vec())
+                .await;
 
             let transaction = Self::process_versioned_message(
                 atl_store,

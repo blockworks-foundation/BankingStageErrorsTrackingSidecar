@@ -18,4 +18,7 @@ pub struct Args {
     /// enable metrics to prometheus at addr
     #[arg(short = 'm', long, default_value_t = String::from("[::]:9091"))]
     pub prometheus_addr: String,
+
+    #[arg(short = 'a', long, default_value_t = String::from("alts.txt"))]
+    pub alts: String,
 }
