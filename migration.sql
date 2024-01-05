@@ -1,7 +1,7 @@
 CREATE SCHEMA banking_stage_results_2;
 
 CREATE TABLE banking_stage_results_2.transactions(
-  signature text primary key,
+  signature char(88) primary key,
   transaction_id bigserial,
   UNIQUE(transaction_id)
 );
@@ -35,8 +35,8 @@ CREATE INDEX idx_transaction_slot_slot ON banking_stage_results_2.transaction_sl
 
 CREATE TABLE banking_stage_results_2.blocks (
   slot BIGINT PRIMARY KEY,
-  block_hash text,
-  leader_identity text,
+  block_hash char(44),
+  leader_identity char(44),
   successful_transactions BIGINT,
   processed_transactions BIGINT,
   total_cu_used BIGINT,
@@ -58,8 +58,6 @@ CREATE TABLE banking_stage_results_2.accounts_map_transaction(
   is_atl BOOL,
   PRIMARY KEY (transaction_id, acc_id)
 );
-
-ALTER TABLE banking_stage_results_2.accounts_map_transaction ADD COLUMN is_atl BOOL;
 
 CREATE INDEX accounts_map_transaction_acc_id ON banking_stage_results_2.accounts_map_transaction(acc_id);
 CREATE INDEX accounts_map_transaction_transaction_id ON banking_stage_results_2.accounts_map_transaction(transaction_id);
@@ -121,8 +119,6 @@ VACUUM FULL banking_stage_results_2.blocks;
 -- optional
 CLUSTER banking_stage_results_2.transaction_slot using idx_transaction_slot_timestamp;
 VACUUM FULL banking_stage_results_2.transaction_slot;
-
-ALTER TABLE banking_stage_results_2.transactions ALTER COLUMN signature TYPE TEXT;
 
 CLUSTER banking_stage_results_2.accounts_map_transaction using accounts_map_transaction_pkey;
 
