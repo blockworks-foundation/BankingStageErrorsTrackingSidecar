@@ -4,9 +4,14 @@ use solana_rpc_client::nonblocking::rpc_client::{self, RpcClient};
 use solana_sdk::pubkey::Pubkey;
 use std::{
     collections::HashMap,
-    sync::{atomic::AtomicU64, Arc},
+    str::FromStr,
+    sync::{
+        atomic::{AtomicBool, AtomicU64},
+        Arc,
+    },
     time::Duration,
 };
+use tokio::io::AsyncReadExt;
 
 use crate::prometheus_sync::PrometheusSync;
 use block_info::BlockInfo;
@@ -44,7 +49,6 @@ lazy_static::lazy_static! {
 pub async fn start_tracking_banking_stage_errors(
     grpc_address: String,
     map_of_infos: Arc<DashMap<(String, u64), TransactionInfo>>,
-    slot_by_errors: Arc<DashMap<u64, u64>>,
     slot: Arc<AtomicU64>,
     _subscribe_to_slots: bool,
 ) {
@@ -89,7 +93,7 @@ pub async fn start_tracking_banking_stage_errors(
             tokio::time::timeout(Duration::from_secs(30), geyser_stream.next()).await
         {
             let Ok(message) = message else {
-            continue;
+                continue;
             };
 
             let Some(update) = message.update_oneof else {
@@ -104,14 +108,6 @@ pub async fn start_tracking_banking_stage_errors(
                     // }
                     BANKING_STAGE_ERROR_EVENT_COUNT.inc();
                     let sig = transaction.signature.to_string();
-                    match slot_by_errors.get_mut(&transaction.slot) {
-                        Some(mut value) => {
-                            *value += 1;
-                        }
-                        None => {
-                            slot_by_errors.insert(transaction.slot, 1);
-                        }
-                    }
                     match map_of_infos.get_mut(&(sig.clone(), transaction.slot)) {
                         Some(mut x) => {
                             let tx_info = x.value_mut();
@@ -144,7 +140,30 @@ async fn start_tracking_blocks(
     grpc_x_token: Option<String>,
     postgres: postgres::Postgres,
     slot: Arc<AtomicU64>,
+    alts_list: Vec<Pubkey>,
 ) {
+    let block_counter = Arc::new(AtomicU64::new(0));
+    let restart_block_subscription = Arc::new(AtomicBool::new(false));
+    let _block_counter_checker = {
+        let block_counter = block_counter.clone();
+        let restart_block_subscription = restart_block_subscription.clone();
+        tokio::spawn(async move {
+            let mut old_count = block_counter.load(std::sync::atomic::Ordering::Relaxed);
+            loop {
+                tokio::time::sleep(Duration::from_secs(20)).await;
+                let new_count = block_counter.load(std::sync::atomic::Ordering::Relaxed);
+                if old_count > 0 && old_count == new_count {
+                    log::error!(
+                        "Did not recieve any block for 20 s, restarting block subscription"
+                    );
+                    restart_block_subscription.store(true, std::sync::atomic::Ordering::Relaxed);
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                }
+                old_count = new_count;
+            }
+        })
+    };
+
     let mut client = yellowstone_grpc_client_original::GeyserGrpcClient::connect(
         grpc_block_addr,
         grpc_x_token,
@@ -152,6 +171,7 @@ async fn start_tracking_blocks(
     )
     .unwrap();
     let atl_store = Arc::new(alt_store::ALTStore::new(rpc_client));
+    atl_store.load_all_alts(alts_list).await;
 
     loop {
         let mut blocks_subs = HashMap::new();
@@ -200,14 +220,18 @@ async fn start_tracking_blocks(
         while let Ok(Some(message)) =
             tokio::time::timeout(Duration::from_secs(30), geyser_stream.next()).await
         {
+            if restart_block_subscription.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+
             let Ok(message) = message else {
-                    continue;
-                };
+                continue;
+            };
 
             let Some(update) = message.update_oneof else {
-                    continue;
-                };
-
+                continue;
+            };
+            block_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             match update {
                 yellowstone_grpc_proto_original::prelude::subscribe_update::UpdateOneof::Block(
                     block,
@@ -239,19 +263,20 @@ async fn start_tracking_blocks(
                     if let Some(account) = account_update.account {
                         let bytes: [u8; 32] = account.pubkey.try_into().unwrap_or(Pubkey::default().to_bytes());
                         let pubkey = Pubkey::new_from_array(bytes);
-                        atl_store.map.insert( pubkey, account.data);
+                        atl_store.save_account(&pubkey, &account.data);
                     }
                 },
                 _ => {}
             };
         }
+        restart_block_subscription.store(false, std::sync::atomic::Ordering::Relaxed);
         log::error!("geyser block stream is broken, retrying");
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }
 
 #[tokio::main()]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
@@ -261,11 +286,23 @@ async fn main() {
 
     let grpc_block_addr = args.grpc_address_to_fetch_blocks;
     let map_of_infos = Arc::new(DashMap::<(String, u64), TransactionInfo>::new());
-    let slot_by_errors = Arc::new(DashMap::<u64, u64>::new());
 
     let postgres = postgres::Postgres::new().await;
     let slot = Arc::new(AtomicU64::new(0));
     let no_block_subscription = grpc_block_addr.is_none();
+    let alts = args.alts;
+
+    //load alts from the file
+    let mut alts_string = String::new();
+    let mut alts_file = tokio::fs::File::open(alts).await?;
+    alts_file.read_to_string(&mut alts_string).await?;
+    let alts_list = alts_string
+        .split("\r\n")
+        .map(|x| x.trim().to_string())
+        .filter(|x| x.len() > 0)
+        .map(|x| Pubkey::from_str(&x).unwrap())
+        .collect_vec();
+
     postgres.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());
     let jhs = args
         .banking_grpc_addresses
@@ -273,13 +310,11 @@ async fn main() {
         .map(|address| {
             let address = address.clone();
             let map_of_infos = map_of_infos.clone();
-            let slot_by_errors = slot_by_errors.clone();
             let slot = slot.clone();
             tokio::spawn(async move {
                 start_tracking_banking_stage_errors(
                     address,
                     map_of_infos,
-                    slot_by_errors,
                     slot,
                     no_block_subscription,
                 )
@@ -294,8 +329,10 @@ async fn main() {
             args.grpc_x_token,
             postgres,
             slot,
+            alts_list,
         )
         .await;
     }
     futures::future::join_all(jhs).await;
+    Ok(())
 }
