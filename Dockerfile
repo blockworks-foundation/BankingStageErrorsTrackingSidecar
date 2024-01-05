@@ -21,5 +21,6 @@ RUN apt-get update && apt-get -y install ca-certificates libc6
 COPY --from=build /app/target/release/grpc_banking_transactions_notifications /usr/local/bin/
 COPY --from=build /app/target/release/cleanupdb /usr/local/bin/
 COPY --from=build /app/alts.txt /usr/local/bin/
+COPY --from=build /app/run-service-and-cleanup.sh /usr/local/bin/
 
-CMD run-service-and-cleanup.sh
+CMD /usr/local/bin/run-service-and-cleanup.sh
