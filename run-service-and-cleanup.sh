@@ -3,12 +3,15 @@
 # bring down whole process tree on exit
 trap "kill 0" EXIT
 
+# 432000 = 1 epoch
+declare -i SLOTS_TO_KEEP=432000*2
+
 # setup endless loop to run cleanupdb and put it in background
 while true; do
   # startup delay
   sleep 300;
   # should retain about 1 week of data
-  RUST_LOG=info /usr/local/bin/cleanupdb --num-slots-to-keep 2000000;
+  RUST_LOG=info /usr/local/bin/cleanupdb --num-slots-to-keep $SLOTS_TO_KEEP;
   # every 5 hours
   sleep 18000;
 done &
