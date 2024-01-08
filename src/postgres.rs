@@ -231,7 +231,7 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            sig TEXT,
+            sig char(88),
             slot BIGINT,
             error_code INT,
             count INT,
