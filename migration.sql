@@ -126,3 +126,8 @@ CLUSTER banking_stage_results_2.transactions using transactions_pkey;
 
 CLUSTER banking_stage_results_2.accounts using accounts_pkey;
 
+CREATE TABLE banking_stage_results_2.accounts_map_transaction_latest(
+    acc_id BIGINT PRIMARY KEY,
+    -- sorted: oldest to latest, max 1000
+    tx_ids BIGINT[]
+);

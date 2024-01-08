@@ -348,6 +348,8 @@ impl PostgresSession {
         }
         writer.finish().await?;
 
+
+        // merge data from temp table into accounts_map_transaction
         let statement = format!(
             r#"
             INSERT INTO banking_stage_results_2.accounts_map_transaction(acc_id, transaction_id, is_writable, is_signer, is_atl)
@@ -365,8 +367,68 @@ impl PostgresSession {
         "#,
             temp_table
         );
-        self.client.execute(statement.as_str(), &[]).await?;
+        let rows = self.client.execute(statement.as_str(), &[]).await?;
+        info!("{} rows inserted into amt", rows);
 
+
+        // merge data from temp table into accounts_map_transaction_latest
+        let temp_table_latest_agged = self.temp_table_tracker.get_new_temp_table();
+        let statement = format!(
+            r#"
+            CREATE TEMP TABLE {temp_table_name} AS
+            SELECT acc_id, array_agg(transaction_id) as tx_ids_agg FROM (
+                SELECT
+                    acc_id,
+                    transaction_id,
+                    -- 1-indexed
+                    row_number() over (partition by acc_id) as idx,
+                    count(*) over (partition by acc_id) as cnt
+                FROM (
+                    WITH amtt AS (
+                        SELECT
+                            accounts.acc_id, transactions.transaction_id
+                        FROM {temp_table_newdata} AS newdata
+                        inner join banking_stage_results_2.accounts on accounts.account_key=newdata.account_key
+                        inner join banking_stage_results_2.transactions on transactions.signature=newdata.signature
+                    )
+                    SELECT acc_id, unnest(tx_ids) as transaction_id FROM banking_stage_results_2.accounts_map_transaction_latest
+                    -- ordered by array order; latest at bottom
+                    WHERE acc_id IN (SELECT acc_id FROM amtt)
+                    UNION ALL
+                    SELECT * FROM amtt
+                    -- order by insertion order; latest at bottom
+                ) as data
+            ) as foo
+            WHERE idx > cnt - {limit}
+            GROUP BY acc_id;
+        "#,
+            temp_table_newdata = temp_table,
+            temp_table_name = temp_table_latest_agged,
+            limit = 1000
+        );
+        let rows = self.client.execute(statement.as_str(), &[]).await?;
+        info!("{} rows inserted into {}", rows, temp_table_latest_agged);
+
+        // TODO remove this code
+        self.client.query(format!("SELECT * FROM {}", temp_table_latest_agged).as_str(), &[]).await?.iter().for_each(|row| {
+            let acc_id: i64 = row.get("acc_id");
+            let tx_ids_agg: Vec<i64> = row.get("tx_ids_agg");
+            info!("acc_id={} tx_ids_agg={:?}", acc_id, tx_ids_agg);
+        });
+
+
+        let statement = format!(
+            r#"
+            INSERT INTO banking_stage_results_2.accounts_map_transaction_latest(acc_id, tx_ids)
+            SELECT acc_id, tx_ids_agg FROM {temp_table_name}
+            ON CONFLICT (acc_id) DO UPDATE SET tx_ids = EXCLUDED.tx_ids;
+        "#,
+            temp_table_name = temp_table_latest_agged);
+        let rows = self.client.execute(statement.as_str(), &[]).await?;
+        info!("{} rows inserted into amt_latest", rows);
+
+
+        self.drop_temp_table(temp_table_latest_agged).await?;
         self.drop_temp_table(temp_table).await?;
         Ok(())
     }
