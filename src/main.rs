@@ -93,12 +93,10 @@ pub async fn start_tracking_banking_stage_errors(
             tokio::time::timeout(Duration::from_secs(30), geyser_stream.next()).await
         {
             let Ok(message) = message else {
-                message.expect("foo");
                 continue;
             };
 
             let Some(update) = message.update_oneof else {
-                message.update_oneof.expect("foo");
                 continue;
             };
             log::trace!("got banking stage notification");
@@ -223,7 +221,6 @@ async fn start_tracking_blocks(
             tokio::time::timeout(Duration::from_secs(30), geyser_stream.next()).await
         {
             if restart_block_subscription.load(std::sync::atomic::Ordering::Relaxed) {
-                info!("request reconnect");
                 break;
             }
 

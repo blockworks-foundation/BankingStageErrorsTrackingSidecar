@@ -1087,13 +1087,10 @@ impl Postgres {
         let session = self.session.clone();
         tokio::task::spawn(async move {
             loop {
-                // FIXME
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                tokio::time::sleep(Duration::from_secs(60)).await;
                 let slot = slot.load(std::sync::atomic::Ordering::Relaxed);
                 let mut txs_to_store = vec![];
-                debug!("checking for txs to store, len={}", map_of_transaction.len());
                 for tx in map_of_transaction.iter() {
-                    debug!("got tx");
                     if slot > tx.key().1 + 300 {
                         txs_to_store.push(tx.key().clone());
                     }
