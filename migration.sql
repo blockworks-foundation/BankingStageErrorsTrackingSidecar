@@ -135,5 +135,5 @@ CREATE TABLE banking_stage_results_2.accounts_map_transaction_latest(
 CREATE OR REPLACE FUNCTION array_dedup_append(base bigint[], append bigint[], n_limit int)
     RETURNS bigint[]
 AS $$
-    SELECT (array_agg(val))[1+count(*)-n_limit:] FROM unnest(array_cat(base,append)) AS t(val)
+    SELECT (array_concat)[1+cardinality(array_concat)-n_limit:] FROM (VALUES(array_cat(base,append))) as t(array_concat)
 $$ LANGUAGE SQL;
