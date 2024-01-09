@@ -131,3 +131,9 @@ CREATE TABLE banking_stage_results_2.accounts_map_transaction_latest(
     -- sorted: oldest to latest, max 1000
     tx_ids BIGINT[]
 );
+
+CREATE OR REPLACE FUNCTION array_dedup_append(base bigint[], append bigint[], n_limit int)
+    RETURNS bigint[]
+AS $$
+    SELECT (array_agg(val))[1+count(*)-n_limit:] FROM unnest(array_cat(base,append)) AS t(val)
+$$ LANGUAGE SQL;

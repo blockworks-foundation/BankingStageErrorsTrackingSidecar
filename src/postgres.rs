@@ -27,6 +27,8 @@ use crate::{
     transaction_info::TransactionInfo,
 };
 
+const LIMIT_LATEST_TXS_PER_ACCOUNT: i64 = 1000;
+
 pub struct TempTableTracker {
     count: AtomicU64,
 }
@@ -376,35 +378,25 @@ impl PostgresSession {
         let statement = format!(
             r#"
             CREATE TEMP TABLE {temp_table_name} AS
-            SELECT acc_id, array_agg(transaction_id) as tx_ids_agg FROM (
+            WITH amtt AS (
                 SELECT
-                    acc_id,
-                    transaction_id,
-                    -- 1-indexed
-                    row_number() over (partition by acc_id) as idx,
-                    count(*) over (partition by acc_id) as cnt
-                FROM (
-                    WITH amtt AS (
-                        SELECT
-                            accounts.acc_id, transactions.transaction_id
-                        FROM {temp_table_newdata} AS newdata
-                        inner join banking_stage_results_2.accounts on accounts.account_key=newdata.account_key
-                        inner join banking_stage_results_2.transactions on transactions.signature=newdata.signature
-                    )
-                    SELECT acc_id, unnest(tx_ids) as transaction_id FROM banking_stage_results_2.accounts_map_transaction_latest
-                    -- ordered by array order; latest at bottom
-                    WHERE acc_id IN (SELECT acc_id FROM amtt)
-                    UNION ALL
-                    SELECT * FROM amtt
-                    -- order by insertion order; latest at bottom
-                ) as data
-            ) as foo
-            WHERE idx > cnt - {limit}
-            GROUP BY acc_id;
+                    acc_id, array_agg(transactions.transaction_id) AS tx_agged
+                FROM {temp_table_newdata} AS newdata
+                inner join banking_stage_results_2.accounts on accounts.account_key=newdata.account_key
+                inner join banking_stage_results_2.transactions on transactions.signature=newdata.signature
+                GROUP BY acc_id
+            )
+            SELECT
+                acc_id,
+                array_dedup_append(
+                    ( SELECT tx_ids FROM banking_stage_results_2.accounts_map_transaction_latest WHERE acc_id=amtt.acc_id LIMIT 1 ),
+                    amtt.tx_agged,
+                    {limit}) AS tx_ids_agg
+                FROM amtt
         "#,
             temp_table_newdata = temp_table,
             temp_table_name = temp_table_latest_agged,
-            limit = 1000
+            limit = LIMIT_LATEST_TXS_PER_ACCOUNT
         );
         let rows = self.client.execute(statement.as_str(), &[]).await?;
         info!("{} rows inserted into {}", rows, temp_table_latest_agged);
@@ -1095,10 +1087,13 @@ impl Postgres {
         let session = self.session.clone();
         tokio::task::spawn(async move {
             loop {
-                tokio::time::sleep(Duration::from_secs(60)).await;
+                // FIXME
+                tokio::time::sleep(Duration::from_secs(5)).await;
                 let slot = slot.load(std::sync::atomic::Ordering::Relaxed);
                 let mut txs_to_store = vec![];
+                debug!("checking for txs to store, len={}", map_of_transaction.len());
                 for tx in map_of_transaction.iter() {
+                    debug!("got tx");
                     if slot > tx.key().1 + 300 {
                         txs_to_store.push(tx.key().clone());
                     }
