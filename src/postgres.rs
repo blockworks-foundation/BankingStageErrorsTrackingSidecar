@@ -410,7 +410,8 @@ impl PostgresSession {
             SELECT acc_id, tx_ids_agg FROM {temp_table_name}
             ON CONFLICT (acc_id) DO UPDATE SET tx_ids = EXCLUDED.tx_ids;
         "#,
-            temp_table_name = temp_table_latest_agged);
+            temp_table_name = temp_table_latest_agged
+        );
         let rows = self.client.execute(statement.as_str(), &[]).await?;
         info!("inserted into accounts_map_transaction_latest: {}", rows);
 
