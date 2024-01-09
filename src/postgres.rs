@@ -300,6 +300,7 @@ impl PostgresSession {
         Ok(())
     }
 
+    /// add accounts for transaction to accounts_map_transaction table and update accounts_map_transaction_latest
     pub async fn insert_accounts_for_transaction(
         &self,
         accounts_for_transaction: Vec<AccountsForTransaction>,
@@ -370,15 +371,17 @@ impl PostgresSession {
             temp_table
         );
         let rows = self.client.execute(statement.as_str(), &[]).await?;
-        info!("{} rows inserted into amt", rows);
+        debug!("inserted into accounts_map_transaction: {}", rows);
 
 
         // merge data from temp table into accounts_map_transaction_latest
+        // note: query uses the array_dedup_append postgres function to deduplicate and limit the array size
+        // example: array_dedup_append('{8,3,2,1}', '{5,3}', 4) -> {2,1,5,3}
         let temp_table_latest_agged = self.temp_table_tracker.get_new_temp_table();
         let statement = format!(
             r#"
             CREATE TEMP TABLE {temp_table_name} AS
-            WITH amtt AS (
+            WITH amt_new AS (
                 SELECT
                     acc_id, array_agg(transactions.transaction_id) AS tx_agged
                 FROM {temp_table_newdata} AS newdata
@@ -389,25 +392,17 @@ impl PostgresSession {
             SELECT
                 acc_id,
                 array_dedup_append(
-                    ( SELECT tx_ids FROM banking_stage_results_2.accounts_map_transaction_latest WHERE acc_id=amtt.acc_id LIMIT 1 ),
-                    amtt.tx_agged,
+                    ( SELECT tx_ids FROM banking_stage_results_2.accounts_map_transaction_latest WHERE acc_id=amt_new.acc_id ),
+                    amt_new.tx_agged,
                     {limit}) AS tx_ids_agg
-                FROM amtt
+                FROM amt_new
         "#,
             temp_table_newdata = temp_table,
             temp_table_name = temp_table_latest_agged,
             limit = LIMIT_LATEST_TXS_PER_ACCOUNT
         );
         let rows = self.client.execute(statement.as_str(), &[]).await?;
-        info!("{} rows inserted into {}", rows, temp_table_latest_agged);
-
-        // TODO remove this code
-        self.client.query(format!("SELECT * FROM {}", temp_table_latest_agged).as_str(), &[]).await?.iter().for_each(|row| {
-            let acc_id: i64 = row.get("acc_id");
-            let tx_ids_agg: Vec<i64> = row.get("tx_ids_agg");
-            info!("acc_id={} tx_ids_agg={:?}", acc_id, tx_ids_agg);
-        });
-
+        info!("inserted into {}: {}", temp_table_latest_agged, rows);
 
         let statement = format!(
             r#"
@@ -417,7 +412,7 @@ impl PostgresSession {
         "#,
             temp_table_name = temp_table_latest_agged);
         let rows = self.client.execute(statement.as_str(), &[]).await?;
-        info!("{} rows inserted into amt_latest", rows);
+        info!("inserted into accounts_map_transaction_latest: {}", rows);
 
 
         self.drop_temp_table(temp_table_latest_agged).await?;
