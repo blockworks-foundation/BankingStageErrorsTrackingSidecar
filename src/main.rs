@@ -11,7 +11,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::io::AsyncReadExt;
+use tokio::{io::AsyncReadExt, time::Instant};
 
 use crate::prometheus_sync::PrometheusSync;
 use block_info::BlockInfo;
@@ -88,10 +88,16 @@ pub async fn start_tracking_banking_stage_errors(
             )
             .await
             .unwrap();
+
+        let mut instance = Instant::now();
         log::info!("started geyser banking stage subscription");
         while let Ok(Some(message)) =
             tokio::time::timeout(Duration::from_secs(30), geyser_stream.next()).await
         {
+            if instance.elapsed() > Duration::from_secs(600) {
+                // reestablish geyser connection
+                break;
+            }
             let Ok(message) = message else {
                 continue;
             };
@@ -107,6 +113,8 @@ pub async fn start_tracking_banking_stage_errors(
                     //     continue;
                     // }
                     BANKING_STAGE_ERROR_EVENT_COUNT.inc();
+                    instance = Instant::now();
+
                     let sig = transaction.signature.to_string();
                     match map_of_infos.get_mut(&(sig.clone(), transaction.slot)) {
                         Some(mut x) => {

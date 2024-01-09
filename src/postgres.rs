@@ -351,7 +351,6 @@ impl PostgresSession {
         }
         writer.finish().await?;
 
-
         // merge data from temp table into accounts_map_transaction
         let statement = format!(
             r#"
@@ -372,7 +371,6 @@ impl PostgresSession {
         );
         let rows = self.client.execute(statement.as_str(), &[]).await?;
         debug!("inserted into accounts_map_transaction: {}", rows);
-
 
         // merge data from temp table into accounts_map_transaction_latest
         // note: query uses the array_dedup_append postgres function to deduplicate and limit the array size
@@ -414,7 +412,6 @@ impl PostgresSession {
         );
         let rows = self.client.execute(statement.as_str(), &[]).await?;
         info!("upserted in accounts_map_transaction_latest: {}", rows);
-
 
         self.drop_temp_table(temp_table_latest_agged).await?;
         self.drop_temp_table(temp_table).await?;
@@ -868,15 +865,20 @@ impl PostgresSession {
         );
 
         {
-            let txs_to_delete = self.client.query_one(
-                &format!(
-                    r"
+            let txs_to_delete = self
+                .client
+                .query_one(
+                    &format!(
+                        r"
                         SELECT count(*) as cnt_tx FROM banking_stage_results_2.transactions txs
                         WHERE txs.transaction_id <= {cutoff_transaction}
                     ",
-                    cutoff_transaction = cutoff_transaction_incl
-                ),
-                &[]).await.unwrap();
+                        cutoff_transaction = cutoff_transaction_incl
+                    ),
+                    &[],
+                )
+                .await
+                .unwrap();
 
             let txs_to_delete: i64 = txs_to_delete.get("cnt_tx");
 
