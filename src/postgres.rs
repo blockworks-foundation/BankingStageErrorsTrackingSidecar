@@ -392,7 +392,7 @@ impl PostgresSession {
             SELECT
                 acc_id,
                 array_dedup_append(
-                    ( SELECT tx_ids FROM banking_stage_results_2.accounts_map_transaction_latest WHERE acc_id=amt_new.acc_id ),
+                    COALESCE((SELECT tx_ids FROM banking_stage_results_2.accounts_map_transaction_latest WHERE acc_id=amt_new.acc_id ), array[]::bigint[]),
                     amt_new.tx_agged,
                     {limit}) AS tx_ids_agg
                 FROM amt_new
@@ -413,7 +413,7 @@ impl PostgresSession {
             temp_table_name = temp_table_latest_agged
         );
         let rows = self.client.execute(statement.as_str(), &[]).await?;
-        info!("inserted into accounts_map_transaction_latest: {}", rows);
+        info!("upserted in accounts_map_transaction_latest: {}", rows);
 
 
         self.drop_temp_table(temp_table_latest_agged).await?;
