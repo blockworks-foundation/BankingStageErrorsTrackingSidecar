@@ -619,9 +619,10 @@ impl PostgresSession {
                 total_cu_used,
                 total_cu_requested,
                 supp_infos
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT DO NOTHING;
             "#;
-        self.client
+        let num_rows = self.client
             .execute(
                 statement,
                 &[
@@ -636,6 +637,10 @@ impl PostgresSession {
                 ],
             )
             .await?;
+        if num_rows == 0 {
+            warn!("block_info already exists in blocks table - skipping insert");
+        }
+
         Ok(())
     }
 
