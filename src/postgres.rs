@@ -120,6 +120,20 @@ impl PostgresSession {
         Ok(client)
     }
 
+    pub async fn configure_work_mem(&self) {
+        self.client
+            .execute("SET work_mem TO '256MB'", &[])
+            .await
+            .unwrap();
+        let work_mem: String = self
+            .client
+            .query_one("show work_mem", &[])
+            .await
+            .unwrap()
+            .get("work_mem");
+        info!("Configured work_mem={}", work_mem);
+    }
+
     pub async fn drop_temp_table(&self, table: String) -> anyhow::Result<()> {
         self.client
             .execute(format!("drop table if exists {};", table).as_str(), &[])
@@ -851,17 +865,7 @@ impl PostgresSession {
             slots_to_keep
         );
 
-        self.client
-            .execute("SET work_mem TO '256MB'", &[])
-            .await
-            .unwrap();
-        let work_mem: String = self
-            .client
-            .query_one("show work_mem", &[])
-            .await
-            .unwrap()
-            .get("work_mem");
-        info!("Configured work_mem={}", work_mem);
+        self.configure_work_mem().await;
 
         {
             info!("Rows before cleanup:");
@@ -1159,8 +1163,9 @@ pub struct Postgres {
 }
 
 impl Postgres {
-    pub async fn new() -> Self {
+    pub async fn new_with_workmem() -> Self {
         let session = PostgresSession::new().await.unwrap();
+        session.configure_work_mem().await;
         Self {
             session: Arc::new(session),
         }
