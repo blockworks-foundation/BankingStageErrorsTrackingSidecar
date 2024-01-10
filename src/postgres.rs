@@ -1190,10 +1190,10 @@ impl Postgres {
 
                     Some(block) => {
                         let slot = block.slot;
-                        info!("SAVING BLOCK {} ..", slot);
+                        info!("saving block {} ..", slot);
                         match session.save_block(block).await {
                             Ok(_) => {
-                                info!("SAVING BLOCK {} DONE", slot);
+                                info!("saving block {} done", slot);
                             }
                             Err(err) => {
                                 error!("saving block failed {}", err);
