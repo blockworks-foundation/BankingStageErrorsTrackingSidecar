@@ -356,15 +356,12 @@ impl PostgresSession {
             r#"
             INSERT INTO banking_stage_results_2.accounts_map_transaction(acc_id, transaction_id, is_writable, is_signer, is_atl)
                 SELECT 
-                    ( select acc_id from banking_stage_results_2.accounts where account_key = t.account_key ),
-                    ( select transaction_id from banking_stage_results_2.transactions where signature = t.signature ),
-                    t.is_writable,
-                    t.is_signer,
-                    t.is_atl
-                FROM (
-                    SELECT account_key, signature, is_writable, is_signer, is_atl from {}
-                )
-                as t (account_key, signature, is_writable, is_signer, is_atl)
+                    ( select acc_id from banking_stage_results_2.accounts where account_key = new_amt_data.account_key ),
+                    ( select transaction_id from banking_stage_results_2.transactions where signature = new_amt_data.signature ),
+                    new_amt_data.is_writable,
+                    new_amt_data.is_signer,
+                    new_amt_data.is_atl
+                FROM {} AS new_amt_data
                 ON CONFLICT DO NOTHING;
         "#,
             temp_table
@@ -497,10 +494,7 @@ impl PostgresSession {
                     t.cu_consumed,
                     t.prioritization_fees,
                     t.supp_infos
-                FROM (
-                    SELECT signature, processed_slot, is_successful, cu_requested, cu_consumed, prioritization_fees, supp_infos from {}
-                )
-                as t (signature, processed_slot, is_successful, cu_requested, cu_consumed, prioritization_fees, supp_infos)
+                FROM {} AS t
                 ON CONFLICT DO NOTHING;
         "#,
             temp_table
