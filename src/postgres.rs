@@ -848,9 +848,6 @@ impl PostgresSession {
         self.save_account_usage_in_block(&block_info).await?;
         self.save_block_info(&block_info).await?;
 
-// FIXME
-        tokio::time::sleep(Duration::from_millis(3000)).await;
-
         Ok(())
     }
 }
