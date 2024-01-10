@@ -545,7 +545,7 @@ impl PostgresSession {
         }
         let num_rows = writer.finish().await?;
         debug!(
-            "inserted {} transactions into temp table in {}ms",
+            "inserted {} transactions for block into temp table in {}ms",
             num_rows,
             started_at.elapsed().as_millis()
         );
@@ -573,7 +573,7 @@ impl PostgresSession {
         let started_at = Instant::now();
         let num_rows = self.client.execute(statement.as_str(), &[]).await?;
         debug!(
-            "inserted {} transactions into transaction_infos table in {}ms",
+            "inserted {} transactions for block into transaction_infos table in {}ms",
             num_rows,
             started_at.elapsed().as_millis()
         );
