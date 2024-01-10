@@ -2,7 +2,6 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
-use std::thread::sleep;
 
 use anyhow::Context;
 use base64::Engine;
