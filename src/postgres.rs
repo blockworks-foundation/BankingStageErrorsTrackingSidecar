@@ -2,6 +2,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
+use std::thread::sleep;
 
 use anyhow::Context;
 use base64::Engine;
@@ -13,6 +14,7 @@ use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
 use serde::Serialize;
 use solana_sdk::transaction::TransactionError;
+use tokio::sync::mpsc::error::SendTimeoutError;
 use tokio::time::Instant;
 use tokio_postgres::{
     binary_copy::BinaryCopyInWriter,
@@ -21,6 +23,7 @@ use tokio_postgres::{
     types::{ToSql, Type},
     Client, CopyInSink, NoTls, Socket,
 };
+use rand::random;
 
 use crate::{
     block_info::{BlockInfo, BlockTransactionInfo},
@@ -1160,14 +1163,37 @@ impl PostgresSession {
 #[derive(Clone)]
 pub struct Postgres {
     session: Arc<PostgresSession>,
+    block_write_queue: tokio::sync::mpsc::Sender<BlockInfo>,
 }
 
 impl Postgres {
     pub async fn new_with_workmem() -> Self {
         let session = PostgresSession::new().await.unwrap();
+        let session = Arc::new(session);
         session.configure_work_mem().await;
+        let (block_sender, mut block_receiver) = tokio::sync::mpsc::channel::<BlockInfo>(5);
+
+        let session_cp = session.clone();
+        tokio::spawn(async move {
+            loop {
+                match block_receiver.recv().await {
+                    None => {
+                        warn!("block_receiver closed - stopping thread");
+                        return;
+                    }
+                    Some(block) => {
+                        info!("SAVING BLOCK {} ..", block.slot);
+                        if let Err(err) = session_cp.save_block(block).await {
+                            error!("saving block failed {}", err);
+                        }
+                    }
+                };
+            }
+        });
+
         Self {
-            session: Arc::new(session),
+            session,
+            block_write_queue: block_sender,
         }
     }
 
@@ -1204,7 +1230,21 @@ impl Postgres {
     }
 
     pub async fn save_block_info(&self, block: BlockInfo) -> anyhow::Result<()> {
-        self.session.save_block(block).await
+        info!("queue capacity: {}", self.block_write_queue.capacity());
+
+        match self.block_write_queue.send_timeout(block, Duration::from_millis(3000)).await {
+            Ok(_) => {
+                return Ok(())
+            }
+            Err(SendTimeoutError::Timeout(block))=> {
+                warn!("Block {} was not received for N seconds - continue wating", block.slot);
+                self.block_write_queue.send(block).await?;
+                return Ok(())
+            }
+            Err(SendTimeoutError::Closed(_)) => {
+                panic!("Receiver has stopped!")
+            }
+        }
     }
 }
 
