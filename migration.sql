@@ -132,23 +132,36 @@ CREATE TABLE banking_stage_results_2.accounts_map_transaction_latest(
     tx_ids BIGINT[]
 );
 
-CREATE OR REPLACE FUNCTION __array_reverse(anyarray) RETURNS anyarray AS $$
-    SELECT ARRAY(
-        SELECT $1[i]
-        FROM generate_subscripts($1,1) AS s(i)
-        ORDER BY i DESC
-    );
-$$ LANGUAGE SQL STRICT IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION __array_reverse_bigint(list bigint[]) RETURNS bigint[] AS $$
+DECLARE
+    reversed_out  bigint[];
+    j				int;
+BEGIN
+    j := CARDINALITY(list);
+    FOR i IN 1..CARDINALITY(list) LOOP
+            reversed_out[j] := list[i];
+            j := j - 1;
+        END LOOP;
+    RETURN reversed_out;
+END;
+$$ LANGUAGE plpgsql STRICT IMMUTABLE;
 
 
 CREATE OR REPLACE FUNCTION array_dedup_append(base bigint[], append bigint[], n_limit int)
     RETURNS bigint[]
 AS $$
-    SELECT __array_reverse(array_agg(val)) FROM (
-        SELECT val FROM (
-            SELECT DISTINCT ON (val) pos, val FROM unnest(__array_reverse(array_cat(base, append))) WITH ORDINALITY as t(val, pos)
-        ) AS deduped
-        ORDER BY pos
-        LIMIT n_limit
-    ) AS result
-$$ LANGUAGE SQL STRICT IMMUTABLE;
+DECLARE
+    outarr bigint[];
+BEGIN
+    SELECT __array_reverse_bigint(array_agg(val)) FROM (
+           SELECT val FROM (
+                               SELECT DISTINCT ON (val) pos, val FROM unnest(__array_reverse_bigint(array_cat(base, append))) WITH ORDINALITY as t(val, pos)
+                           ) AS deduped
+           ORDER BY pos
+           LIMIT n_limit
+       ) AS result
+    INTO outarr;
+    RETURN outarr;
+END;
+$$ LANGUAGE plpgsql STRICT IMMUTABLE;
