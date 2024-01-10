@@ -1,4 +1,3 @@
-use std::time::Instant;
 use std::{
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
@@ -14,6 +13,7 @@ use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
 use serde::Serialize;
 use solana_sdk::transaction::TransactionError;
+use tokio::time::Instant;
 use tokio_postgres::{
     binary_copy::BinaryCopyInWriter,
     config::SslMode,
@@ -164,7 +164,7 @@ impl PostgresSession {
         let num_rows = writer.finish().await?;
         debug!(
             "inserted {} signatures into temp table in {}ms",
-            num_rows.len(),
+            num_rows,
             started_at.elapsed().as_millis()
         );
 
@@ -226,7 +226,7 @@ impl PostgresSession {
         let num_rows = writer.finish().await?;
         debug!(
             "inserted {} account keys into temp table in {}ms",
-            num_rows.len(),
+            num_rows,
             started_at.elapsed().as_millis()
         );
 
@@ -312,7 +312,7 @@ impl PostgresSession {
         let num_rows = writer.finish().await?;
         debug!(
             "inserted {} txs for tx_slot into temp table in {}ms",
-            num_rows.len(),
+            num_rows,
             started_at.elapsed().as_millis()
         );
 
@@ -392,7 +392,7 @@ impl PostgresSession {
         let num_rows = writer.finish().await?;
         debug!(
             "inserted {} accounts for transaction into temp table in {}ms",
-            num_rows.len(),
+            num_rows,
             started_at.elapsed().as_millis()
         );
 
@@ -546,7 +546,7 @@ impl PostgresSession {
         let num_rows = writer.finish().await?;
         debug!(
             "inserted {} transactions into temp table in {}ms",
-            num_rows.len(),
+            num_rows,
             started_at.elapsed().as_millis()
         );
 
@@ -644,7 +644,7 @@ impl PostgresSession {
         let num_rows = writer.finish().await?;
         debug!(
             "inserted {} heavily_locked_accounts into temp table in {}ms",
-            num_rows.len(),
+            num_rows,
             started_at.elapsed().as_millis()
         );
 
