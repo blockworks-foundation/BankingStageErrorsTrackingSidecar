@@ -15,6 +15,7 @@ use postgres_native_tls::MakeTlsConnector;
 use serde::Serialize;
 use solana_sdk::transaction::TransactionError;
 use tokio::sync::mpsc::error::SendTimeoutError;
+use tokio::sync::mpsc::Sender;
 use tokio::time::Instant;
 use tokio_postgres::{
     binary_copy::BinaryCopyInWriter,
@@ -23,13 +24,13 @@ use tokio_postgres::{
     types::{ToSql, Type},
     Client, CopyInSink, NoTls, Socket,
 };
-use rand::random;
 
 use crate::{
     block_info::{BlockInfo, BlockTransactionInfo},
     transaction_info::TransactionInfo,
 };
 
+const BLOCK_WRITE_BUFFER_SIZE: usize = 5;
 const LIMIT_LATEST_TXS_PER_ACCOUNT: i64 = 1000;
 
 pub struct TempTableTracker {
@@ -846,7 +847,10 @@ impl PostgresSession {
         // save account usage in blocks
         self.save_account_usage_in_block(&block_info).await?;
         self.save_block_info(&block_info).await?;
-        info!("block saved");
+
+// FIXME
+        tokio::time::sleep(Duration::from_millis(3000)).await;
+
         Ok(())
     }
 }
@@ -1163,7 +1167,6 @@ impl PostgresSession {
 #[derive(Clone)]
 pub struct Postgres {
     session: Arc<PostgresSession>,
-    block_write_queue: tokio::sync::mpsc::Sender<BlockInfo>,
 }
 
 impl Postgres {
@@ -1171,9 +1174,15 @@ impl Postgres {
         let session = PostgresSession::new().await.unwrap();
         let session = Arc::new(session);
         session.configure_work_mem().await;
-        let (block_sender, mut block_receiver) = tokio::sync::mpsc::channel::<BlockInfo>(5);
+        Self {
+            session
+        }
+    }
 
-        let session_cp = session.clone();
+    pub fn spawn_block_saver(&self) -> Sender<BlockInfo> {
+        let (block_sender, mut block_receiver) = tokio::sync::mpsc::channel::<BlockInfo>(BLOCK_WRITE_BUFFER_SIZE);
+
+        let session = self.session.clone();
         tokio::spawn(async move {
             loop {
                 match block_receiver.recv().await {
@@ -1181,21 +1190,26 @@ impl Postgres {
                         warn!("block_receiver closed - stopping thread");
                         return;
                     }
+
                     Some(block) => {
-                        info!("SAVING BLOCK {} ..", block.slot);
-                        if let Err(err) = session_cp.save_block(block).await {
-                            error!("saving block failed {}", err);
+                        let slot = block.slot;
+                        info!("SAVING BLOCK {} ..", slot);
+                        match session.save_block(block).await {
+                            Ok(_) => {
+                                info!("SAVING BLOCK {} DONE", slot);
+                            }
+                            Err(err) => {
+                                error!("saving block failed {}", err);
+                            }
                         }
                     }
                 };
             }
         });
 
-        Self {
-            session,
-            block_write_queue: block_sender,
-        }
+        return block_sender;
     }
+
 
     pub fn spawn_transaction_infos_saver(
         &self,
@@ -1229,23 +1243,6 @@ impl Postgres {
         });
     }
 
-    pub async fn save_block_info(&self, block: BlockInfo) -> anyhow::Result<()> {
-        info!("queue capacity: {}", self.block_write_queue.capacity());
-
-        match self.block_write_queue.send_timeout(block, Duration::from_millis(3000)).await {
-            Ok(_) => {
-                return Ok(())
-            }
-            Err(SendTimeoutError::Timeout(block))=> {
-                warn!("Block {} was not received for N seconds - continue wating", block.slot);
-                self.block_write_queue.send(block).await?;
-                return Ok(())
-            }
-            Err(SendTimeoutError::Closed(_)) => {
-                panic!("Receiver has stopped!")
-            }
-        }
-    }
 }
 
 #[derive(Serialize, Clone)]
@@ -1264,4 +1261,21 @@ pub struct AccountUsed {
 pub struct AccountsForTransaction {
     pub signature: String,
     pub accounts: Vec<AccountUsed>,
+}
+
+
+pub async fn send_block_info_to_buffer(block_sender_postgres: Sender<BlockInfo>, block_info: BlockInfo) -> anyhow::Result<()> {
+    debug!("block buffer capacity: {}", block_sender_postgres.capacity());
+
+    const WARNING_THRESHOLD: Duration = Duration::from_millis(3000);
+
+    let started_at = Instant::now();
+    if let Err(SendTimeoutError::Timeout(block)) = block_sender_postgres.send_timeout(block_info, WARNING_THRESHOLD).await {
+        let slot = block.slot;
+        warn!("Block {} was not buffered for {:.3}s - continue waiting", slot, WARNING_THRESHOLD.as_secs_f32());
+        block_sender_postgres.send(block).await?;
+        info!("Block {} was finally buffered after {:.3}s", slot, started_at.elapsed().as_secs_f32());
+    }
+
+    Ok(())
 }

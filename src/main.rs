@@ -20,6 +20,7 @@ use dashmap::DashMap;
 use futures::StreamExt;
 use log::{debug, error, info};
 use prometheus::{opts, register_int_counter, register_int_gauge, IntCounter, IntGauge};
+use tokio::sync::mpsc::Sender;
 use transaction_info::TransactionInfo;
 
 mod alt_store;
@@ -146,7 +147,7 @@ async fn start_tracking_blocks(
     rpc_client: Arc<RpcClient>,
     grpc_block_addr: String,
     grpc_x_token: Option<String>,
-    postgres: postgres::Postgres,
+    block_sender_postgres: Sender<BlockInfo>,
     slot: Arc<AtomicU64>,
     alts_list: Vec<Pubkey>,
 ) {
@@ -248,7 +249,7 @@ async fn start_tracking_blocks(
                     BLOCK_TXS.set(block.transactions.len() as i64);
                     BANKING_STAGE_BLOCKS_COUNTER.inc();
                     BANKING_STAGE_BLOCKS_TASK.inc();
-                    let postgres = postgres.clone();
+                    let block_sender_postgres = block_sender_postgres.clone();
                     let slot = slot.clone();
                     let atl_store = atl_store.clone();
                     tokio::spawn(async move {
@@ -258,7 +259,7 @@ async fn start_tracking_blocks(
                         TXERROR_COUNT.add(
                             block_info.processed_transactions - block_info.successful_transactions,
                         );
-                        if let Err(e) = postgres.save_block_info(block_info).await {
+                        if let Err(e) = postgres::send_block_info_to_buffer(block_sender_postgres, block_info).await {
                             panic!("Error saving block {}", e);
                         }
                         slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
@@ -312,7 +313,11 @@ async fn main() -> anyhow::Result<()> {
         .map(|x| Pubkey::from_str(&x).unwrap())
         .collect_vec();
 
-    postgres1.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());
+
+    let block_sender = postgres1.spawn_block_saver();
+
+    postgres2.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());
+
     let jhs = args
         .banking_grpc_addresses
         .iter()
@@ -336,7 +341,7 @@ async fn main() -> anyhow::Result<()> {
             rpc_client,
             gprc_block_addr,
             args.grpc_x_token,
-            postgres2,
+            block_sender,
             slot,
             alts_list,
         )
