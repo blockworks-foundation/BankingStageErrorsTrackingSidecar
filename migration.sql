@@ -132,36 +132,21 @@ CREATE TABLE banking_stage_results_2.accounts_map_transaction_latest(
     tx_ids BIGINT[]
 );
 
-
-CREATE OR REPLACE FUNCTION __array_reverse_bigint(list bigint[]) RETURNS bigint[] AS $$
-DECLARE
-    reversed_out  bigint[];
-    j				int;
-BEGIN
-    j := CARDINALITY(list);
-    FOR i IN 1..CARDINALITY(list) LOOP
-            reversed_out[j] := list[i];
-            j := j - 1;
-        END LOOP;
-    RETURN reversed_out;
-END;
-$$ LANGUAGE plpgsql STRICT IMMUTABLE;
-
-
 CREATE OR REPLACE FUNCTION array_dedup_append(base bigint[], append bigint[], n_limit int)
     RETURNS bigint[]
 AS $$
 DECLARE
-    outarr bigint[];
+	tmplist  bigint[];
+	el		bigint;
+	len int;
 BEGIN
-    SELECT __array_reverse_bigint(array_agg(val)) FROM (
-           SELECT val FROM (
-                               SELECT DISTINCT ON (val) pos, val FROM unnest(__array_reverse_bigint(array_cat(base, append))) WITH ORDINALITY as t(val, pos)
-                           ) AS deduped
-           ORDER BY pos
-           LIMIT n_limit
-       ) AS result
-    INTO outarr;
-    RETURN outarr;
-END;
-$$ LANGUAGE plpgsql STRICT IMMUTABLE;
+    tmplist := base;
+    FOREACH el IN ARRAY append LOOP
+            tmplist := array_remove(tmplist, el);
+            tmplist := tmplist || el;
+        END LOOP;
+
+    len := CARDINALITY(tmplist);
+    RETURN  tmplist[(len + 1 - n_limit):];
+END
+$$ LANGUAGE plpgsql IMMUTABLE CALLED ON NULL INPUT;
