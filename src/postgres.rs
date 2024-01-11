@@ -30,7 +30,7 @@ use crate::{
 };
 
 const BLOCK_WRITE_BUFFER_SIZE: usize = 5;
-const LIMIT_LATEST_TXS_PER_ACCOUNT: i64 = 1000;
+const LIMIT_LATEST_TXS_PER_ACCOUNT: i64 = 100;
 
 pub struct TempTableTracker {
     count: AtomicU64,
