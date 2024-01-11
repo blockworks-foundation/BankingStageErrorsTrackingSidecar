@@ -30,7 +30,6 @@ CREATE TABLE banking_stage_results_2.transaction_slot (
   PRIMARY KEY (transaction_id, slot, error_code)
 );
 
-CREATE INDEX idx_transaction_slot_timestamp ON banking_stage_results_2.transaction_slot(utc_timestamp);
 CREATE INDEX idx_transaction_slot_slot ON banking_stage_results_2.transaction_slot(slot);
 
 CREATE TABLE banking_stage_results_2.blocks (
@@ -59,10 +58,7 @@ CREATE TABLE banking_stage_results_2.accounts_map_transaction(
   PRIMARY KEY (transaction_id, acc_id)
 );
 
-CREATE INDEX accounts_map_transaction_acc_id ON banking_stage_results_2.accounts_map_transaction(acc_id);
 CREATE INDEX accounts_map_transaction_transaction_id ON banking_stage_results_2.accounts_map_transaction(transaction_id);
-
-CREATE INDEX idx_blocks_block_hash ON banking_stage_results_2.blocks(block_hash);
 
 CREATE TABLE banking_stage_results_2.accounts_map_blocks (
   acc_id BIGINT,
@@ -74,9 +70,8 @@ CREATE TABLE banking_stage_results_2.accounts_map_blocks (
   supp_infos text,
   PRIMARY KEY (acc_id, slot, is_write_locked)
 );
-CREATE INDEX idx_accounts_map_blocks_slot ON banking_stage_results_2.accounts_map_blocks(slot);
 
-insert into banking_stage_results_2.errors (error_text, error_code) VALUES 
+insert into banking_stage_results_2.errors (error_text, error_code) VALUES
         ('AccountBorrowOutstanding', 0),
         ('AccountInUse', 1),
         ('AccountLoadedTwice', 2),
@@ -113,18 +108,6 @@ insert into banking_stage_results_2.errors (error_text, error_code) VALUES
         ('WouldExceedMaxAccountCostLimit', 33),
         ('WouldExceedMaxBlockCostLimit', 34),
         ('WouldExceedMaxVoteCostLimit', 35);
-
-CLUSTER banking_stage_results_2.blocks using blocks_pkey;
-VACUUM FULL banking_stage_results_2.blocks;
--- optional
-CLUSTER banking_stage_results_2.transaction_slot using idx_transaction_slot_timestamp;
-VACUUM FULL banking_stage_results_2.transaction_slot;
-
-CLUSTER banking_stage_results_2.accounts_map_transaction using accounts_map_transaction_pkey;
-
-CLUSTER banking_stage_results_2.transactions using transactions_pkey;
-
-CLUSTER banking_stage_results_2.accounts using accounts_pkey;
 
 CREATE TABLE banking_stage_results_2.accounts_map_transaction_latest(
     acc_id BIGINT PRIMARY KEY,
