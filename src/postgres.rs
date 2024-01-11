@@ -454,7 +454,7 @@ impl PostgresSession {
             SELECT
                 acc_id,
                 array_dedup_append(
-                    COALESCE((SELECT tx_ids FROM banking_stage_results_2.accounts_map_transaction_latest WHERE acc_id=amt_new.acc_id ), array[]::bigint[]),
+                    (SELECT tx_ids FROM banking_stage_results_2.accounts_map_transaction_latest WHERE acc_id=amt_new.acc_id),
                     amt_new.tx_agged,
                     {limit}) AS tx_ids_agg
                 FROM amt_new
