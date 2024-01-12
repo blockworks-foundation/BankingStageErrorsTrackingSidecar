@@ -132,6 +132,8 @@ CREATE TABLE banking_stage_results_2.accounts_map_transaction_latest(
     tx_ids BIGINT[]
 );
 
+CREATE INDEX idx_accounts_map_blocks_slot ON banking_stage_results_2.accounts_map_blocks(slot);
+
 CREATE OR REPLACE FUNCTION array_dedup_append(base bigint[], append bigint[], n_limit int)
     RETURNS bigint[]
 AS $$
