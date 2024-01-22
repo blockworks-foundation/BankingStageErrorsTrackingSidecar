@@ -313,7 +313,6 @@ async fn main() -> anyhow::Result<()> {
         .map(|x| Pubkey::from_str(&x).unwrap())
         .collect_vec();
 
-
     let block_sender = postgres1.spawn_block_saver();
 
     postgres2.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());
