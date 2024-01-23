@@ -1,6 +1,8 @@
 use clap::Parser;
 use itertools::Itertools;
+use solana_account_decoder::UiDataSliceConfig;
 use solana_rpc_client::nonblocking::rpc_client::{self, RpcClient};
+use solana_rpc_client_api::config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
 use solana_sdk::pubkey::Pubkey;
 use std::{
     collections::HashMap,
@@ -11,7 +13,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{io::AsyncReadExt, time::Instant};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, time::Instant};
 
 use crate::prometheus_sync::PrometheusSync;
 use block_info::BlockInfo;
@@ -179,8 +181,47 @@ async fn start_tracking_blocks(
         None,
     )
     .unwrap();
+
+    // Load all ALTs stores.
+    // let alts_list = rpc_client
+    //     .get_program_accounts_with_config(
+    //         &solana_address_lookup_table_program::id(),
+    //         RpcProgramAccountsConfig {
+    //             filters: None,
+    //             account_config: RpcAccountInfoConfig {
+    //                 encoding: Some(solana_account_decoder::UiAccountEncoding::Base64),
+    //                 data_slice: Some(UiDataSliceConfig {
+    //                     offset: 0,
+    //                     length: 0,
+    //                 }),
+    //                 commitment: None,
+    //                 min_context_slot: None,
+    //             },
+    //             with_context: None,
+    //         },
+    //     )
+    //     .await
+    //     .unwrap()
+    //     .iter()
+    //     .map(|(pubkey, _)| pubkey.clone())
+    //     .collect_vec();
+
+    // ALT store from binary
+    // let atl_store = { 
+    //     let alt_store = Arc::new(alt_store::ALTStore::new(rpc_client));
+    //     let mut alts_file = tokio::fs::File::open(alts_list).await.unwrap();
+    //     let mut buf = vec![];
+    //     alts_file.read_to_end(&mut buf).await.unwrap();
+    //     alt_store.load_binary(buf);
+    //     alt_store
+    // };
+
     let atl_store = Arc::new(alt_store::ALTStore::new(rpc_client));
     atl_store.load_all_alts(alts_list).await;
+
+    // let data = atl_store.serialize();
+    // let mut alts_file = tokio::fs::File::create("alt_binary.bin").await.unwrap();
+    // alts_file.write_all(&data).await.unwrap();
 
     loop {
         let mut blocks_subs = HashMap::new();

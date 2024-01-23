@@ -1,6 +1,7 @@
 use dashmap::DashMap;
 use itertools::Itertools;
 use prometheus::{opts, register_int_gauge, IntGauge};
+use serde::{Deserialize, Serialize};
 use solana_address_lookup_table_program::state::AddressLookupTable;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{account::ReadableAccount, commitment_config::CommitmentConfig, pubkey::Pubkey};
@@ -32,7 +33,7 @@ impl ALTStore {
     pub async fn load_all_alts(&self, alts_list: Vec<Pubkey>) {
         let alts_list = alts_list
             .iter()
-            .filter(|x| !self.map.contains_key(&x) && !self.is_loading.contains_key(&x))
+            .filter(|x| !self.map.contains_key(x) && !self.is_loading.contains_key(x))
             .cloned()
             .collect_vec();
 
@@ -43,17 +44,19 @@ impl ALTStore {
         log::info!("Preloading {} ALTs", alts_list.len());
 
         for batches in alts_list.chunks(1000).map(|x| x.to_vec()) {
-            let lock = Arc::new(RwLock::new(()));
-            // add in loading list
-            batches.iter().for_each(|x| {
-                self.is_loading.insert(x.clone(), lock.clone());
-            });
-            let _context = lock.write().await;
             let tasks = batches.chunks(10).map(|batch| {
                 let batch = batch.to_vec();
                 let rpc_client = self.rpc_client.clone();
                 let this = self.clone();
+                let is_loading = self.is_loading.clone();
                 tokio::spawn(async move {
+                    let lock = Arc::new(RwLock::new(()));
+                    let _context = lock.write().await;
+                    // add in loading list
+                    batch.iter().for_each(|x| {
+                        is_loading.insert(x.clone(), lock.clone());
+                    });
+
                     if let Ok(multiple_accounts) = rpc_client
                         .get_multiple_accounts_with_commitment(
                             &batch,
@@ -173,6 +176,8 @@ impl ALTStore {
                 // not loading
             }
         }
+        
+        self.is_loading.remove(&alt);
         match self.load_accounts(alt, write_accounts, read_account).await {
             Some(x) => x,
             None => {
@@ -187,6 +192,31 @@ impl ALTStore {
                     }
                 }
             }
+        }
+    }
+
+    pub fn serialize(&self) -> Vec<u8> {
+        bincode::serialize::<BinaryALTData>(&BinaryALTData::new(&self.map)).unwrap()
+    }
+
+    pub fn load_binary(&self, binary_data: Vec<u8>) {
+        let binary_alt_data = bincode::deserialize::<BinaryALTData>(&binary_data).unwrap();
+        for (alt, accounts) in binary_alt_data.data.iter() {
+            self.map.insert(alt.clone(), accounts.clone());
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct BinaryALTData {
+    pub data: Vec<(Pubkey, Vec<Pubkey>)>
+}
+
+impl BinaryALTData {
+    pub fn new(map: &Arc<DashMap<Pubkey, Vec<Pubkey>>>) -> Self {
+        let data = map.iter().map(|x| (x.key().clone(), x.value().clone())).collect_vec();
+        Self {
+            data
         }
     }
 }

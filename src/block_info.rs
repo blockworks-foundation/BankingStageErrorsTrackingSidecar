@@ -118,10 +118,12 @@ pub struct BlockInfo {
     pub transactions: Vec<BlockTransactionInfo>,
 }
 
+
+
 impl BlockInfo {
     pub async fn process_versioned_message(
-        atl_store: Arc<ALTStore>,
-        signature: String,
+        atl_store: &Arc<ALTStore>,
+        signature: &String,
         slot: Slot,
         message: &VersionedMessage,
         prio_fees_in_block: &mut Vec<(u64, u64)>,
@@ -257,7 +259,7 @@ impl BlockInfo {
             }
 
             Some(BlockTransactionInfo {
-                signature,
+                signature: signature.to_string(),
                 processed_slot: slot as i64,
                 is_successful,
                 cu_requested: cu_requested as i64,
@@ -378,23 +380,22 @@ impl BlockInfo {
         let mut readlocked_accounts: HashMap<Pubkey, AccountData> = HashMap::new();
         let mut total_cu_requested: u64 = 0;
         let mut prio_fees_in_block = vec![];
-        let mut block_transactions = vec![];
         let mut lookup_tables = HashSet::new();
-        for transaction in &block.transactions {
+        let sigs_and_messages = block.transactions.iter().filter_map( |transaction| {
             let Some(tx) = &transaction.transaction else {
-                continue;
+                return None;
             };
 
             let Some(message) = &tx.message else {
-                continue;
+                return None;
             };
 
             let Some(header) = &message.header else {
-                continue;
+                return None;
             };
 
             let Some(meta) = &transaction.meta else {
-                continue;
+                return None;
             };
             let signature = Signature::try_from(&tx.signatures[0][0..64])
                 .unwrap()
@@ -446,29 +447,31 @@ impl BlockInfo {
                     })
                     .collect(),
             });
-            let atl_store = atl_store.clone();
-            atl_store
-                .load_all_alts(lookup_tables.iter().cloned().collect_vec())
-                .await;
+            Some((signature, message, meta, transaction.is_vote))
+        }).collect_vec();
 
-            let transaction = Self::process_versioned_message(
-                atl_store,
-                signature,
-                slot,
-                &message,
-                &mut prio_fees_in_block,
-                &mut writelocked_accounts,
-                &mut readlocked_accounts,
-                meta.compute_units_consumed.unwrap_or(0),
-                &mut total_cu_requested,
-                transaction.is_vote,
-                meta.err.is_none(),
-            )
-            .await;
-            if let Some(transaction) = transaction {
-                block_transactions.push(transaction);
+        atl_store.load_all_alts(lookup_tables.iter().cloned().collect_vec()).await;
+
+        let mut block_transactions = vec![];
+        for (signature, message, meta, is_vote) in sigs_and_messages {
+            let tx = Self::process_versioned_message(
+                                &atl_store,
+                                &signature,
+                                slot,
+                                &message,
+                                &mut prio_fees_in_block,
+                                &mut writelocked_accounts,
+                                &mut readlocked_accounts,
+                                meta.compute_units_consumed.unwrap_or(0),
+                                &mut total_cu_requested,
+                                is_vote,
+                                meta.err.is_none(),
+                            )
+                            .await;
+            if let Some(tx) = tx {
+                block_transactions.push(tx);
             }
-        }
+        };
 
         let heavily_locked_accounts =
             Self::calculate_account_usage(&writelocked_accounts, &readlocked_accounts);
