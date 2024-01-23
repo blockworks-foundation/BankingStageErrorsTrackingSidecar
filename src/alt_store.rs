@@ -57,11 +57,11 @@ impl ALTStore {
                         is_loading.insert(x.clone(), lock.clone());
                     });
 
-                    if let Ok(multiple_accounts) = rpc_client
+                    if let Ok(Ok(multiple_accounts)) = tokio::time::timeout( Duration::from_secs(30), rpc_client
                         .get_multiple_accounts_with_commitment(
                             &batch,
                             CommitmentConfig::processed(),
-                        )
+                        ))
                         .await
                     {
                         for (index, acc) in multiple_accounts.value.iter().enumerate() {
