@@ -1,4 +1,4 @@
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use itertools::Itertools;
 use prometheus::{opts, register_int_gauge, IntGauge};
 use serde::{Deserialize, Serialize};
@@ -6,8 +6,6 @@ use solana_address_lookup_table_program::state::AddressLookupTable;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{account::ReadableAccount, commitment_config::CommitmentConfig, pubkey::Pubkey};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::RwLock;
-
 use crate::block_info::TransactionAccount;
 lazy_static::lazy_static! {
     static ref ALTS_IN_STORE: IntGauge =
@@ -18,7 +16,7 @@ lazy_static::lazy_static! {
 pub struct ALTStore {
     rpc_client: Arc<RpcClient>,
     pub map: Arc<DashMap<Pubkey, Vec<Pubkey>>>,
-    is_loading: Arc<DashMap<Pubkey, Arc<tokio::sync::RwLock<()>>>>,
+    is_loading: Arc<DashSet<Pubkey>>,
 }
 
 impl ALTStore {
@@ -26,20 +24,24 @@ impl ALTStore {
         Self {
             rpc_client,
             map: Arc::new(DashMap::new()),
-            is_loading: Arc::new(DashMap::new()),
+            is_loading: Arc::new(DashSet::new()),
         }
     }
 
     pub async fn load_all_alts(&self, alts_list: Vec<Pubkey>) {
         let alts_list = alts_list
             .iter()
-            .filter(|x| !self.map.contains_key(x) && !self.is_loading.contains_key(x))
+            .filter(|x| !self.map.contains_key(x) && !self.is_loading.contains(x))
             .cloned()
             .collect_vec();
 
         if alts_list.is_empty() {
             return;
         }
+        // add in loading list
+        alts_list.iter().for_each(|x| {
+            self.is_loading.insert(x.clone());
+        });
 
         log::info!("Preloading {} ALTs", alts_list.len());
 
@@ -48,15 +50,7 @@ impl ALTStore {
                 let batch = batch.to_vec();
                 let rpc_client = self.rpc_client.clone();
                 let this = self.clone();
-                let is_loading = self.is_loading.clone();
                 tokio::spawn(async move {
-                    let lock = Arc::new(RwLock::new(()));
-                    let _context = lock.write().await;
-                    // add in loading list
-                    batch.iter().for_each(|x| {
-                        is_loading.insert(x.clone(), lock.clone());
-                    });
-
                     if let Ok(Ok(multiple_accounts)) = tokio::time::timeout( Duration::from_secs(30), rpc_client
                         .get_multiple_accounts_with_commitment(
                             &batch,
@@ -79,6 +73,10 @@ impl ALTStore {
                 log::warn!("timedout getting {} alts", alts_list.len());
             }
         }
+
+        alts_list.iter().for_each(|x| {
+            self.is_loading.remove(x);
+        });
         log::info!("Finished Loading {} ALTs", alts_list.len());
     }
 
@@ -95,9 +93,7 @@ impl ALTStore {
     }
 
     pub async fn reload_alt_from_rpc(&self, alt: &Pubkey) {
-        let lock = Arc::new(RwLock::new(()));
-        let _ = lock.write().await;
-        self.is_loading.insert(alt.clone(), lock.clone());
+        self.is_loading.insert(alt.clone());
         let response = self
             .rpc_client
             .get_account_with_commitment(alt, CommitmentConfig::processed())
@@ -107,6 +103,7 @@ impl ALTStore {
                 self.save_account(alt, account.data());
             }
         }
+        self.is_loading.remove(alt);
     }
 
     pub async fn load_accounts(
@@ -166,11 +163,13 @@ impl ALTStore {
         read_account: &Vec<u8>,
     ) -> Vec<TransactionAccount> {
         match self.is_loading.get(&alt) {
-            Some(x) => {
+            Some(_) => {
                 // if there is a lock we wait until it is fullfilled
-                let x = x.value().clone();
-                log::debug!("waiting for alt {}", alt.to_string());
-                let _ = x.read().await;
+                let mut times = 0;
+                while times < 10 && self.is_loading.contains(alt) {
+                    times += 1;
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
             }
             None => {
                 // not loading
