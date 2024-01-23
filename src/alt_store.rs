@@ -32,7 +32,7 @@ impl ALTStore {
     pub async fn load_all_alts(&self, alts_list: Vec<Pubkey>) {
         let alts_list = alts_list
             .iter()
-            .filter(|x| self.map.contains_key(&x) || self.is_loading.contains_key(&x))
+            .filter(|x| !self.map.contains_key(&x) && !self.is_loading.contains_key(&x))
             .cloned()
             .collect_vec();
 

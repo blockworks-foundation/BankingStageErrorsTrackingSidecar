@@ -1476,6 +1476,7 @@ dependencies = [
  "rustls 0.20.8",
  "serde",
  "serde_json",
+ "solana-account-decoder",
  "solana-address-lookup-table-program 1.16.17 (registry+https://github.com/rust-lang/crates.io-index)",
  "solana-rpc-client",
  "solana-rpc-client-api",
