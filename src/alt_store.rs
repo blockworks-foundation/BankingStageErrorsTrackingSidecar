@@ -4,7 +4,7 @@ use prometheus::{opts, register_int_gauge, IntGauge};
 use solana_address_lookup_table_program::state::AddressLookupTable;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{account::ReadableAccount, commitment_config::CommitmentConfig, pubkey::Pubkey};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 
 use crate::block_info::TransactionAccount;
@@ -69,7 +69,12 @@ impl ALTStore {
                     }
                 })
             });
-            futures::future::join_all(tasks).await;
+            if let Err(_) =
+                tokio::time::timeout(Duration::from_secs(20), futures::future::join_all(tasks))
+                    .await
+            {
+                log::warn!("timedout getting {} alts", alts_list.len());
+            }
         }
         log::info!("Finished Loading {} ALTs", alts_list.len());
     }
