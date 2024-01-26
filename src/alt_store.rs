@@ -5,13 +5,15 @@ use prometheus::{opts, register_int_gauge, IntGauge};
 use serde::{Deserialize, Serialize};
 use solana_address_lookup_table_program::state::AddressLookupTable;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::{account::ReadableAccount, commitment_config::CommitmentConfig, pubkey::Pubkey};
-use std::{collections::HashSet, sync::Arc, time::Duration};
-use tokio::sync::RwLock;
+use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
+use std::{sync::Arc, time::Duration};
 
 lazy_static::lazy_static! {
     static ref ALTS_IN_STORE: IntGauge =
        register_int_gauge!(opts!("banking_stage_sidecar_alts_stored", "Alts stored in sidecar")).unwrap();
+    
+    static ref ALTS_IN_LOADING_QUEUE: IntGauge = 
+        register_int_gauge!(opts!("banking_stage_sidecar_alts_loading_queue", "Alts in loading queue in sidecar")).unwrap();
 }
 
 #[derive(Clone)]
@@ -36,12 +38,12 @@ impl ALTStore {
                 loop {
                     if let Ok(pk) = rx.recv().await {
                         let mut alts_list = vec![pk];
-                        for _ in 1..100 {
-                            if let Ok(pk) = rx.try_recv() {
-                                alts_list.push(pk)
-                            } else {
-                                break;
-                            }
+                        ALTS_IN_LOADING_QUEUE.dec();
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                        while let Ok(pk) = rx.try_recv() {
+                            alts_list.push(pk);
+                            ALTS_IN_LOADING_QUEUE.dec();
+                            tokio::time::sleep(Duration::from_millis(1)).await;
                         }
                         instant._load_all_alts(&alts_list).await;
                     }
@@ -105,6 +107,7 @@ impl ALTStore {
             .iter()
             .filter(|x| !self.map.contains_key(x))
         {
+            ALTS_IN_LOADING_QUEUE.inc();
             let _ = self.loading_queue.send(*key).await;
         }
     }
@@ -121,7 +124,7 @@ impl ALTStore {
         drop(lookup_table);
     }
 
-    pub async fn load_accounts(
+    async fn load_accounts(
         &self,
         alt: &Pubkey,
         write_accounts: &Vec<u8>,

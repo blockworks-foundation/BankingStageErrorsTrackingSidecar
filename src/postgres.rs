@@ -124,7 +124,7 @@ impl PostgresSession {
             while let Some(accounts_for_transaction) =
                 accounts_for_transaction_reciever.recv().await
             {
-                let instant = Instant::now();
+                let instant: Instant = Instant::now();
                 ACCOUNTS_SAVING_QUEUE.dec();
                 if let Err(e) = instance
                     .insert_accounts_for_transaction(accounts_for_transaction)
@@ -883,6 +883,7 @@ impl PostgresSession {
             })
             .collect_vec();
 
+        ACCOUNTS_SAVING_QUEUE.inc();
         let _ = self.accounts_for_transaction_sender.send(txs_accounts);
 
         // save transactions in block
