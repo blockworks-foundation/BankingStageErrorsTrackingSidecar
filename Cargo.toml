@@ -10,6 +10,7 @@ solana-rpc-client = "~1.16.17"
 solana-rpc-client-api = "~1.16.17"
 solana-transaction-status = "~1.16.17"
 solana-address-lookup-table-program = "~1.16.17"
+solana-account-decoder = "~1.16.17"
 
 itertools = "0.10.5"
 serde = { version = "1.0.160", features = ["derive"] }

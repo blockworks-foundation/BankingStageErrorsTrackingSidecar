@@ -120,8 +120,8 @@ pub struct BlockInfo {
 
 impl BlockInfo {
     pub async fn process_versioned_message(
-        atl_store: Arc<ALTStore>,
-        signature: String,
+        atl_store: &Arc<ALTStore>,
+        signature: &String,
         slot: Slot,
         message: &VersionedMessage,
         prio_fees_in_block: &mut Vec<(u64, u64)>,
@@ -257,7 +257,7 @@ impl BlockInfo {
             }
 
             Some(BlockTransactionInfo {
-                signature,
+                signature: signature.to_string(),
                 processed_slot: slot as i64,
                 is_successful,
                 cu_requested: cu_requested as i64,
@@ -378,82 +378,89 @@ impl BlockInfo {
         let mut readlocked_accounts: HashMap<Pubkey, AccountData> = HashMap::new();
         let mut total_cu_requested: u64 = 0;
         let mut prio_fees_in_block = vec![];
-        let mut block_transactions = vec![];
         let mut lookup_tables = HashSet::new();
-        for transaction in &block.transactions {
-            let Some(tx) = &transaction.transaction else {
-                continue;
-            };
+        let sigs_and_messages = block
+            .transactions
+            .iter()
+            .filter_map(|transaction| {
+                let Some(tx) = &transaction.transaction else {
+                    return None;
+                };
 
-            let Some(message) = &tx.message else {
-                continue;
-            };
+                let Some(message) = &tx.message else {
+                    return None;
+                };
 
-            let Some(header) = &message.header else {
-                continue;
-            };
+                let Some(header) = &message.header else {
+                    return None;
+                };
 
-            let Some(meta) = &transaction.meta else {
-                continue;
-            };
-            let signature = Signature::try_from(&tx.signatures[0][0..64])
-                .unwrap()
-                .to_string();
+                let Some(meta) = &transaction.meta else {
+                    return None;
+                };
+                let signature = Signature::try_from(&tx.signatures[0][0..64])
+                    .unwrap()
+                    .to_string();
 
-            let message = VersionedMessage::V0(v0::Message {
-                header: MessageHeader {
-                    num_required_signatures: header.num_required_signatures as u8,
-                    num_readonly_signed_accounts: header.num_readonly_signed_accounts as u8,
-                    num_readonly_unsigned_accounts: header.num_readonly_unsigned_accounts as u8,
-                },
-                account_keys: message
-                    .account_keys
-                    .clone()
-                    .into_iter()
-                    .map(|key| {
-                        let bytes: [u8; 32] =
-                            key.try_into().unwrap_or(Pubkey::default().to_bytes());
-                        Pubkey::new_from_array(bytes)
-                    })
-                    .collect(),
-                recent_blockhash: solana_sdk::hash::Hash::new(&message.recent_blockhash),
-                instructions: message
-                    .instructions
-                    .clone()
-                    .into_iter()
-                    .map(|ix| CompiledInstruction {
-                        program_id_index: ix.program_id_index as u8,
-                        accounts: ix.accounts,
-                        data: ix.data,
-                    })
-                    .collect(),
-                address_table_lookups: message
-                    .address_table_lookups
-                    .clone()
-                    .into_iter()
-                    .map(|table| {
-                        let bytes: [u8; 32] = table
-                            .account_key
-                            .try_into()
-                            .unwrap_or(Pubkey::default().to_bytes());
-                        let account_key = Pubkey::new_from_array(bytes);
-                        lookup_tables.insert(account_key.clone());
-                        MessageAddressTableLookup {
-                            account_key,
-                            writable_indexes: table.writable_indexes,
-                            readonly_indexes: table.readonly_indexes,
-                        }
-                    })
-                    .collect(),
-            });
-            let atl_store = atl_store.clone();
-            atl_store
-                .load_all_alts(lookup_tables.iter().cloned().collect_vec())
-                .await;
+                let message = VersionedMessage::V0(v0::Message {
+                    header: MessageHeader {
+                        num_required_signatures: header.num_required_signatures as u8,
+                        num_readonly_signed_accounts: header.num_readonly_signed_accounts as u8,
+                        num_readonly_unsigned_accounts: header.num_readonly_unsigned_accounts as u8,
+                    },
+                    account_keys: message
+                        .account_keys
+                        .clone()
+                        .into_iter()
+                        .map(|key| {
+                            let bytes: [u8; 32] =
+                                key.try_into().unwrap_or(Pubkey::default().to_bytes());
+                            Pubkey::new_from_array(bytes)
+                        })
+                        .collect(),
+                    recent_blockhash: solana_sdk::hash::Hash::new(&message.recent_blockhash),
+                    instructions: message
+                        .instructions
+                        .clone()
+                        .into_iter()
+                        .map(|ix| CompiledInstruction {
+                            program_id_index: ix.program_id_index as u8,
+                            accounts: ix.accounts,
+                            data: ix.data,
+                        })
+                        .collect(),
+                    address_table_lookups: message
+                        .address_table_lookups
+                        .clone()
+                        .into_iter()
+                        .map(|table| {
+                            let bytes: [u8; 32] = table
+                                .account_key
+                                .try_into()
+                                .unwrap_or(Pubkey::default().to_bytes());
+                            let account_key = Pubkey::new_from_array(bytes);
+                            lookup_tables.insert(account_key.clone());
+                            MessageAddressTableLookup {
+                                account_key,
+                                writable_indexes: table.writable_indexes,
+                                readonly_indexes: table.readonly_indexes,
+                            }
+                        })
+                        .collect(),
+                });
+                Some((signature, message, meta, transaction.is_vote))
+            })
+            .collect_vec();
 
-            let transaction = Self::process_versioned_message(
-                atl_store,
-                signature,
+        atl_store
+            .load_all_alts(lookup_tables.iter().cloned().collect_vec())
+            .await;
+
+        let mut block_transactions = vec![];
+        for (signature, message, meta, is_vote) in sigs_and_messages {
+            let tx = Self::process_versioned_message(
+                &atl_store,
+                &signature,
                 slot,
                 &message,
                 &mut prio_fees_in_block,
@@ -461,12 +468,12 @@ impl BlockInfo {
                 &mut readlocked_accounts,
                 meta.compute_units_consumed.unwrap_or(0),
                 &mut total_cu_requested,
-                transaction.is_vote,
+                is_vote,
                 meta.err.is_none(),
             )
             .await;
-            if let Some(transaction) = transaction {
-                block_transactions.push(transaction);
+            if let Some(tx) = tx {
+                block_transactions.push(tx);
             }
         }
 
