@@ -33,7 +33,6 @@ use crate::{
 const BLOCK_WRITE_BUFFER_SIZE: usize = 5;
 const LIMIT_LATEST_TXS_PER_ACCOUNT: i64 = 100;
 
-
 lazy_static::lazy_static! {
     static ref ACCOUNTS_SAVING_QUEUE: IntGauge =
        register_int_gauge!(opts!("banking_stage_sidecar_accounts_save_queue", "Account in save queue")).unwrap();

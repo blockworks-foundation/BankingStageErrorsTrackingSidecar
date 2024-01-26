@@ -13,7 +13,10 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, time::Instant};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    time::Instant,
+};
 
 use crate::prometheus_sync::PrometheusSync;
 use block_info::BlockInfo;
@@ -207,7 +210,7 @@ async fn start_tracking_blocks(
     //     .collect_vec();
 
     // ALT store from binary
-    // let atl_store = { 
+    // let atl_store = {
     //     let alt_store = Arc::new(alt_store::ALTStore::new(rpc_client));
     //     let mut alts_file = tokio::fs::File::open(alts_list).await.unwrap();
     //     let mut buf = vec![];
@@ -217,7 +220,7 @@ async fn start_tracking_blocks(
     // };
 
     let atl_store = Arc::new(alt_store::ALTStore::new(rpc_client));
-    atl_store.load_all_alts(alts_list).await;
+    atl_store.load_alts_list(&alts_list).await;
 
     // let data = atl_store.serialize();
     // let mut alts_file = tokio::fs::File::create("alt_binary.bin").await.unwrap();

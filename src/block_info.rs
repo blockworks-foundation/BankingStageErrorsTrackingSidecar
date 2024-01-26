@@ -453,7 +453,7 @@ impl BlockInfo {
             .collect_vec();
 
         atl_store
-            .load_all_alts(lookup_tables.iter().cloned().collect_vec())
+            .start_loading_missing_alts(&lookup_tables.iter().cloned().collect_vec())
             .await;
 
         let mut block_transactions = vec![];

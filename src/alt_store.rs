@@ -18,34 +18,41 @@ lazy_static::lazy_static! {
 pub struct ALTStore {
     rpc_client: Arc<RpcClient>,
     pub map: Arc<DashMap<Pubkey, Vec<Pubkey>>>,
-    under_loading: Arc<RwLock<HashSet<Pubkey>>>,
+    loading_queue: Arc<async_channel::Sender<Pubkey>>,
 }
 
 impl ALTStore {
     pub fn new(rpc_client: Arc<RpcClient>) -> Self {
-        Self {
+        let (sx, rx) = async_channel::unbounded();
+        let instant = Self {
             rpc_client,
             map: Arc::new(DashMap::new()),
-            under_loading: Arc::new(RwLock::new(HashSet::new())),
-        }
-    }
-
-    pub async fn load_all_alts(&self, alts_list: Vec<Pubkey>) {
-        let alts_list = {
-            let lk = self.under_loading.read().await;
-            alts_list
-                .iter()
-                .filter(|x| !self.map.contains_key(x) && !lk.contains(x))
-                .cloned()
-                .collect_vec()
+            loading_queue: Arc::new(sx),
         };
 
-        if alts_list.is_empty() {
-            return;
+        {
+            let instant = instant.clone();
+            tokio::task::spawn(async move {
+                loop {
+                    if let Ok(pk) = rx.recv().await {
+                        let mut alts_list = vec![pk];
+                        for _ in 1..100 {
+                            if let Ok(pk) = rx.try_recv() {
+                                alts_list.push(pk)
+                            } else {
+                                break;
+                            }
+                        }
+                        instant._load_all_alts(&alts_list).await;
+                    }
+                }
+            });
         }
-        // add in loading list
-        self.is_loading(&alts_list).await;
 
+        instant
+    }
+
+    pub async fn load_alts_list(&self, alts_list: &Vec<Pubkey>) {
         log::info!("Preloading {} ALTs", alts_list.len());
 
         for batches in alts_list.chunks(1000).map(|x| x.to_vec()) {
@@ -78,9 +85,28 @@ impl ALTStore {
                 log::warn!("timedout getting {} alts", alts_list.len());
             }
         }
-
-        self.finished_loading(&alts_list).await;
         ALTS_IN_STORE.set(self.map.len() as i64);
+    }
+
+    async fn _load_all_alts(&self, alts_list: &Vec<Pubkey>) {
+        let alts_list = alts_list
+            .iter()
+            .filter(|x| !self.map.contains_key(x))
+            .cloned()
+            .collect_vec();
+        if alts_list.is_empty() {
+            return;
+        }
+        self.load_alts_list(&alts_list).await;
+    }
+
+    pub async fn start_loading_missing_alts(&self, alts_list: &Vec<Pubkey>) {
+        for key in alts_list
+            .iter()
+            .filter(|x| !self.map.contains_key(x))
+        {
+            let _ = self.loading_queue.send(*key).await;
+        }
     }
 
     pub fn save_account(&self, address: &Pubkey, data: &[u8]) {
@@ -93,20 +119,6 @@ impl ALTStore {
             ALTS_IN_STORE.inc();
         }
         drop(lookup_table);
-    }
-
-    pub async fn reload_alt_from_rpc(&self, alt: &Pubkey) {
-        self.is_loading(&vec![*alt]).await;
-        let response = self
-            .rpc_client
-            .get_account_with_commitment(alt, CommitmentConfig::processed())
-            .await;
-        if let Ok(account_res) = response {
-            if let Some(account) = account_res.value {
-                self.save_account(alt, account.data());
-            }
-        }
-        self.finished_loading(&vec![*alt]).await;
     }
 
     pub async fn load_accounts(
@@ -155,7 +167,7 @@ impl ALTStore {
                     .collect_vec();
                 Some([wa, ra].concat())
             }
-            None => Some(vec![]),
+            None => None,
         }
     }
 
@@ -165,29 +177,12 @@ impl ALTStore {
         write_accounts: &Vec<u8>,
         read_account: &Vec<u8>,
     ) -> Vec<TransactionAccount> {
-        let mut times = 0;
-        const MAX_TIMES_RETRY: usize = 100;
-        while self.is_loading_contains(alt).await {
-            if times > MAX_TIMES_RETRY {
-                break;
-            }
-            times += 1;
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-
         match self.load_accounts(alt, write_accounts, read_account).await {
             Some(x) => x,
             None => {
-                //load alt
-                self.reload_alt_from_rpc(&alt).await;
-                match self.load_accounts(alt, write_accounts, read_account).await {
-                    Some(x) => x,
-                    None => {
-                        // reloading did not work
-                        log::error!("cannot load alt even after");
-                        vec![]
-                    }
-                }
+                // forget alt for now, start loading it for next blocks
+                // loading should be on its way
+                vec![]
             }
         }
     }
@@ -201,25 +196,6 @@ impl ALTStore {
         for (alt, accounts) in binary_alt_data.data.iter() {
             self.map.insert(alt.clone(), accounts.clone());
         }
-    }
-
-    async fn is_loading(&self, alts_list: &Vec<Pubkey>) {
-        let mut write = self.under_loading.write().await;
-        for alt in alts_list {
-            write.insert(alt.clone());
-        }
-    }
-
-    async fn finished_loading(&self, alts_list: &Vec<Pubkey>) {
-        let mut write = self.under_loading.write().await;
-        for alt in alts_list {
-            write.remove(alt);
-        }
-    }
-
-    async fn is_loading_contains(&self, alt: &Pubkey) -> bool {
-        let read = self.under_loading.read().await;
-        read.contains(alt)
     }
 }
 
