@@ -126,7 +126,7 @@ impl PostgresSession {
                 accounts_for_transaction_reciever.recv().await
             {
                 let instant = Instant::now();
-                ACCOUNTS_SAVING_QUEUE.sub(accounts_for_transaction.len() as i64);
+                ACCOUNTS_SAVING_QUEUE.dec();
                 if let Err(e) = instance
                     .insert_accounts_for_transaction(accounts_for_transaction)
                     .await
@@ -836,7 +836,7 @@ impl PostgresSession {
             })
             .collect_vec();
         // insert accounts for transaction
-        ACCOUNTS_SAVING_QUEUE.add(txs_accounts.len() as i64);
+        ACCOUNTS_SAVING_QUEUE.inc();
         let _ = self.accounts_for_transaction_sender.send(txs_accounts);
         Ok(())
     }
