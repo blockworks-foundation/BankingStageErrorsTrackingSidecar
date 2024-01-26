@@ -1,3 +1,4 @@
+use crate::block_info::TransactionAccount;
 use dashmap::DashMap;
 use itertools::Itertools;
 use prometheus::{opts, register_int_gauge, IntGauge};
@@ -6,7 +7,6 @@ use solana_address_lookup_table_program::state::AddressLookupTable;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{account::ReadableAccount, commitment_config::CommitmentConfig, pubkey::Pubkey};
 use std::{collections::HashSet, sync::Arc, time::Duration};
-use crate::block_info::TransactionAccount;
 use tokio::sync::RwLock;
 
 lazy_static::lazy_static! {
@@ -34,10 +34,10 @@ impl ALTStore {
         let alts_list = {
             let lk = self.under_loading.read().await;
             alts_list
-            .iter()
-            .filter(|x| !self.map.contains_key(x) && !lk.contains(x))
-            .cloned()
-            .collect_vec()
+                .iter()
+                .filter(|x| !self.map.contains_key(x) && !lk.contains(x))
+                .cloned()
+                .collect_vec()
         };
 
         if alts_list.is_empty() {
@@ -54,12 +54,14 @@ impl ALTStore {
                 let rpc_client = self.rpc_client.clone();
                 let this = self.clone();
                 tokio::spawn(async move {
-                    if let Ok(Ok(multiple_accounts)) = tokio::time::timeout( Duration::from_secs(30), rpc_client
-                        .get_multiple_accounts_with_commitment(
+                    if let Ok(Ok(multiple_accounts)) = tokio::time::timeout(
+                        Duration::from_secs(30),
+                        rpc_client.get_multiple_accounts_with_commitment(
                             &batch,
                             CommitmentConfig::processed(),
-                        ))
-                        .await
+                        ),
+                    )
+                    .await
                     {
                         for (index, acc) in multiple_accounts.value.iter().enumerate() {
                             if let Some(acc) = acc {
@@ -79,7 +81,6 @@ impl ALTStore {
 
         self.finished_loading(&alts_list).await;
         ALTS_IN_STORE.set(alts_list.len() as i64);
-
     }
 
     pub fn save_account(&self, address: &Pubkey, data: &[u8]) {
@@ -164,9 +165,8 @@ impl ALTStore {
         write_accounts: &Vec<u8>,
         read_account: &Vec<u8>,
     ) -> Vec<TransactionAccount> {
-        
         let mut times = 0;
-        const MAX_TIMES_RETRY : usize = 100;
+        const MAX_TIMES_RETRY: usize = 100;
         while self.is_loading_contains(alt).await {
             if times > MAX_TIMES_RETRY {
                 break;
@@ -203,14 +203,14 @@ impl ALTStore {
         }
     }
 
-    async fn is_loading(&self,  alts_list: &Vec<Pubkey>) {
+    async fn is_loading(&self, alts_list: &Vec<Pubkey>) {
         let mut write = self.under_loading.write().await;
         for alt in alts_list {
             write.insert(alt.clone());
         }
     }
 
-    async fn finished_loading(&self,  alts_list: &Vec<Pubkey>) {
+    async fn finished_loading(&self, alts_list: &Vec<Pubkey>) {
         let mut write = self.under_loading.write().await;
         for alt in alts_list {
             write.remove(alt);
@@ -225,14 +225,15 @@ impl ALTStore {
 
 #[derive(Serialize, Deserialize)]
 pub struct BinaryALTData {
-    pub data: Vec<(Pubkey, Vec<Pubkey>)>
+    pub data: Vec<(Pubkey, Vec<Pubkey>)>,
 }
 
 impl BinaryALTData {
     pub fn new(map: &Arc<DashMap<Pubkey, Vec<Pubkey>>>) -> Self {
-        let data = map.iter().map(|x| (x.key().clone(), x.value().clone())).collect_vec();
-        Self {
-            data
-        }
+        let data = map
+            .iter()
+            .map(|x| (x.key().clone(), x.value().clone()))
+            .collect_vec();
+        Self { data }
     }
 }
