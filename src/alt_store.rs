@@ -80,7 +80,7 @@ impl ALTStore {
         }
 
         self.finished_loading(&alts_list).await;
-        ALTS_IN_STORE.set(alts_list.len() as i64);
+        ALTS_IN_STORE.set(self.map.len() as i64);
     }
 
     pub fn save_account(&self, address: &Pubkey, data: &[u8]) {
