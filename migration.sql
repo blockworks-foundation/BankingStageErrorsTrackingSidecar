@@ -24,11 +24,12 @@ CREATE TABLE banking_stage_results_2.errors (
 CREATE TABLE banking_stage_results_2.transaction_slot (
   transaction_id BIGINT,
   slot BIGINT,
-  error_code INT REFERENCES banking_stage_results_2.errors(error_code),
+  error_code INT,
   count INT,
   utc_timestamp TIMESTAMP NOT NULL,
   PRIMARY KEY (transaction_id, slot, error_code)
 );
+
 
 CREATE INDEX idx_transaction_slot_timestamp ON banking_stage_results_2.transaction_slot(utc_timestamp);
 CREATE INDEX idx_transaction_slot_slot ON banking_stage_results_2.transaction_slot(slot);
