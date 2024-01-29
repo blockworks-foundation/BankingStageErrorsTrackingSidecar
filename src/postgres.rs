@@ -886,10 +886,6 @@ impl PostgresSession {
         ACCOUNTS_SAVING_QUEUE.inc();
         let _ = self.accounts_for_transaction_sender.send(txs_accounts);
 
-        // save transactions in block
-        self.insert_transactions_for_block(&block_info.transactions, block_info.slot)
-            .await?;
-
         // save account usage in blocks
         self.save_account_usage_in_block(&block_info).await?;
         self.save_block_info(&block_info).await?;
