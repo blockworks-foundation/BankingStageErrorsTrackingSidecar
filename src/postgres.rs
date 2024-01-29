@@ -1,6 +1,5 @@
 use std::{
-    sync::{atomic::AtomicU64, Arc},
-    time::Duration,
+    collections::HashSet, sync::{atomic::AtomicU64, Arc}, time::Duration
 };
 
 use anyhow::Context;
@@ -272,7 +271,7 @@ impl PostgresSession {
 
     pub async fn create_accounts_for_transaction(
         &self,
-        accounts: Vec<String>,
+        accounts: HashSet<String>,
     ) -> anyhow::Result<()> {
         // create temp table
         let temp_table = self.temp_table_tracker.get_new_temp_table();
@@ -850,7 +849,7 @@ impl PostgresSession {
             .iter()
             .flat_map(|transaction| transaction.account_used.clone())
             .map(|(acc, _)| acc)
-            .collect_vec();
+            .collect();
         self.create_accounts_for_transaction(accounts).await?;
         // add transaction in tx slot table
         self.insert_transaction_in_txslot_table(txs.as_slice())
@@ -902,7 +901,7 @@ impl PostgresSession {
             .heavily_locked_accounts
             .iter()
             .map(|acc| acc.key.clone())
-            .collect_vec();
+            .collect();
         self.create_accounts_for_transaction(accounts).await?;
 
         let txs_accounts = block_info
