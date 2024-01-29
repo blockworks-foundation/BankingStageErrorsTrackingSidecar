@@ -11,6 +11,7 @@ use itertools::Itertools;
 use log::{debug, error, info, log, warn, Level};
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
+use prometheus::{opts, register_int_gauge, IntGauge};
 use serde::Serialize;
 use solana_sdk::transaction::TransactionError;
 use tokio::sync::mpsc::error::SendTimeoutError;
@@ -31,6 +32,11 @@ use crate::{
 
 const BLOCK_WRITE_BUFFER_SIZE: usize = 5;
 const LIMIT_LATEST_TXS_PER_ACCOUNT: i64 = 100;
+
+lazy_static::lazy_static! {
+    static ref ACCOUNTS_SAVING_QUEUE: IntGauge =
+       register_int_gauge!(opts!("banking_stage_sidecar_accounts_save_queue", "Account in save queue")).unwrap();
+}
 
 pub struct TempTableTracker {
     count: AtomicU64,
@@ -118,7 +124,8 @@ impl PostgresSession {
             while let Some(accounts_for_transaction) =
                 accounts_for_transaction_reciever.recv().await
             {
-                let instant = Instant::now();
+                let instant: Instant = Instant::now();
+                ACCOUNTS_SAVING_QUEUE.dec();
                 if let Err(e) = instance
                     .insert_accounts_for_transaction(accounts_for_transaction)
                     .await
@@ -828,6 +835,7 @@ impl PostgresSession {
             })
             .collect_vec();
         // insert accounts for transaction
+        ACCOUNTS_SAVING_QUEUE.inc();
         let _ = self.accounts_for_transaction_sender.send(txs_accounts);
         Ok(())
     }
@@ -875,11 +883,8 @@ impl PostgresSession {
             })
             .collect_vec();
 
+        ACCOUNTS_SAVING_QUEUE.inc();
         let _ = self.accounts_for_transaction_sender.send(txs_accounts);
-
-        // save transactions in block
-        self.insert_transactions_for_block(&block_info.transactions, block_info.slot)
-            .await?;
 
         // save account usage in blocks
         self.save_account_usage_in_block(&block_info).await?;
