@@ -51,7 +51,10 @@ lazy_static::lazy_static! {
 
     static ref TIME_TO_SAVE_TRANSACTION: IntGauge =
        register_int_gauge!(opts!("banking_stage_sidecar_transaction_time", "Account in tx save transactions")).unwrap();
-    
+
+    static ref TIME_TO_SAVE_TRANSACTION_DATA: IntGauge =
+       register_int_gauge!(opts!("banking_stage_sidecar_transaction_data_time", "Account in tx save transactions")).unwrap();
+
 }
 
 pub struct TempTableTracker {
@@ -905,6 +908,12 @@ impl PostgresSession {
 
         ACCOUNTS_SAVING_QUEUE.inc();
         let _ = self.accounts_for_transaction_sender.send(txs_accounts);
+
+        // insert transactions
+        let instant_save_tx = Instant::now();
+        self.insert_transactions_for_block(&block_info.transactions, block_info.slot)
+            .await?;
+        TIME_TO_SAVE_TRANSACTION_DATA.set(instant_save_tx.elapsed().as_millis() as i64);
 
         // save account usage in blocks
         let ins = Instant::now();

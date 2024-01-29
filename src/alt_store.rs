@@ -11,8 +11,8 @@ use std::{sync::Arc, time::Duration};
 lazy_static::lazy_static! {
     static ref ALTS_IN_STORE: IntGauge =
        register_int_gauge!(opts!("banking_stage_sidecar_alts_stored", "Alts stored in sidecar")).unwrap();
-    
-    static ref ALTS_IN_LOADING_QUEUE: IntGauge = 
+
+    static ref ALTS_IN_LOADING_QUEUE: IntGauge =
         register_int_gauge!(opts!("banking_stage_sidecar_alts_loading_queue", "Alts in loading queue in sidecar")).unwrap();
 }
 
@@ -103,10 +103,7 @@ impl ALTStore {
     }
 
     pub async fn start_loading_missing_alts(&self, alts_list: &Vec<Pubkey>) {
-        for key in alts_list
-            .iter()
-            .filter(|x| !self.map.contains_key(x))
-        {
+        for key in alts_list.iter().filter(|x| !self.map.contains_key(x)) {
             ALTS_IN_LOADING_QUEUE.inc();
             let _ = self.loading_queue.send(*key).await;
         }
