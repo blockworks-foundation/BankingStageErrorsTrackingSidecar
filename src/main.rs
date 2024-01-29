@@ -342,8 +342,7 @@ async fn main() -> anyhow::Result<()> {
     let grpc_block_addr = args.grpc_address_to_fetch_blocks;
     let map_of_infos = Arc::new(DashMap::<(String, u64), TransactionInfo>::new());
 
-    let postgres1 = postgres::Postgres::new_with_workmem().await;
-    let postgres2 = postgres::Postgres::new_with_workmem().await;
+    let postgres1 = postgres::Postgres::new_with_workmem(0).await;
     let slot = Arc::new(AtomicU64::new(0));
     let no_block_subscription = grpc_block_addr.is_none();
     let alts = args.alts;
@@ -359,9 +358,14 @@ async fn main() -> anyhow::Result<()> {
         .map(|x| Pubkey::from_str(&x).unwrap())
         .collect_vec();
 
-    let block_senders = (0..4).map(|x| postgres1.spawn_block_saver()).collect_vec();
+    let mut block_senders = vec![];
+    for i in 1..=4 
+    {
+        let s = postgres::Postgres::new_with_workmem(i).await.spawn_block_saver();
+        block_senders.push(s);
+    }
 
-    postgres2.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());
+    postgres1.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());
 
     let jhs = args
         .banking_grpc_addresses

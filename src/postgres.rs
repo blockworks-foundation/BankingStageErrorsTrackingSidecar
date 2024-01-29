@@ -14,7 +14,7 @@ use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
 use prometheus::{opts, register_int_gauge, IntGauge};
 use serde::Serialize;
-use solana_sdk::{pubkey::Pubkey, transaction::TransactionError};
+use solana_sdk::transaction::TransactionError;
 use tokio::sync::mpsc::error::SendTimeoutError;
 use tokio::sync::mpsc::Sender;
 use tokio::time::Instant;
@@ -61,12 +61,37 @@ lazy_static::lazy_static! {
 }
 
 #[derive(Clone)]
+pub struct TempTableTracker {
+    nb : usize,
+    count: Arc<AtomicU64>,
+}
+
+impl TempTableTracker {
+    pub fn new(nb:usize) -> Self {
+        Self {
+            nb,
+            count: Arc::new(AtomicU64::new(1)),
+        }
+    }
+
+    pub fn get_new_temp_table(&self) -> String {
+        format!(
+            "temp_table_{}_{}",
+            self.nb,
+            self.count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        )
+    }
+}
+
+#[derive(Clone)]
 pub struct PostgresSession {
     client: Arc<Client>,
+    temp_table_tracker : TempTableTracker,
 }
 
 impl PostgresSession {
-    pub async fn new() -> anyhow::Result<Self> {
+    pub async fn new(nb : usize) -> anyhow::Result<Self> {
         let pg_config = std::env::var("PG_CONFIG").context("env PG_CONFIG not found")?;
         let pg_config = pg_config.parse::<tokio_postgres::Config>()?;
 
@@ -98,14 +123,14 @@ impl PostgresSession {
             Self::spawn_connection(pg_config, MakeTlsConnector::new(connector)).await?
         };
 
-        let instance = Self {
+        Ok(Self {
             client: Arc::new(client),
-        };
-        Ok(instance)
+            temp_table_tracker: TempTableTracker::new(nb)
+        })
     }
 
     pub fn get_new_temp_table(&self) -> String {
-        Pubkey::new_unique().to_string()
+        self.temp_table_tracker.get_new_temp_table()
     }
 
     async fn spawn_connection<T>(
@@ -1213,8 +1238,8 @@ pub struct Postgres {
 }
 
 impl Postgres {
-    pub async fn new_with_workmem() -> Self {
-        let session = PostgresSession::new().await.unwrap();
+    pub async fn new_with_workmem(nb: usize) -> Self {
+        let session = PostgresSession::new(nb).await.unwrap();
         let session = Arc::new(session);
         session.configure_work_mem().await;
         Self { session }
