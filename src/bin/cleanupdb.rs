@@ -24,7 +24,7 @@ async fn main() {
         dry_run,
     } = Args::parse();
 
-    let session = PostgresSession::new().await.unwrap();
+    let session = PostgresSession::new(0).await.unwrap();
 
     session.cleanup_old_data(num_slots_to_keep, dry_run).await;
 }
