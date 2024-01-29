@@ -36,6 +36,22 @@ const LIMIT_LATEST_TXS_PER_ACCOUNT: i64 = 100;
 lazy_static::lazy_static! {
     static ref ACCOUNTS_SAVING_QUEUE: IntGauge =
        register_int_gauge!(opts!("banking_stage_sidecar_accounts_save_queue", "Account in save queue")).unwrap();
+
+    static ref TIME_TO_STORE_TX_ACCOUNT: IntGauge =
+       register_int_gauge!(opts!("banking_stage_sidecar_tx_account_store", "Account in tx account")).unwrap();
+
+    static ref TIME_TO_STORE_TX_SAVE_TIME: IntGauge =
+       register_int_gauge!(opts!("banking_stage_sidecar_tx_save_time", "Account in tx save time")).unwrap();
+
+    static ref TIME_TO_SAVE_BLOCK: IntGauge =
+       register_int_gauge!(opts!("banking_stage_sidecar_save_block", "Account in tx save block time")).unwrap();
+
+    static ref TIME_TO_SAVE_BLOCK_ACCOUNTS: IntGauge =
+       register_int_gauge!(opts!("banking_stage_sidecar_block_accounts", "Account in tx save block accounts")).unwrap();
+
+    static ref TIME_TO_SAVE_TRANSACTION: IntGauge =
+       register_int_gauge!(opts!("banking_stage_sidecar_transaction_time", "Account in tx save transactions")).unwrap();
+    
 }
 
 pub struct TempTableTracker {
@@ -132,6 +148,7 @@ impl PostgresSession {
                 {
                     error!("Error inserting accounts for transactions : {e:?}");
                 }
+                TIME_TO_STORE_TX_ACCOUNT.set(instant.elapsed().as_millis() as i64);
                 log::info!(
                     "Took {} ms to insert accounts for transaction",
                     instant.elapsed().as_millis()
@@ -850,13 +867,16 @@ impl PostgresSession {
     }
 
     pub async fn save_block(&self, block_info: BlockInfo) -> anyhow::Result<()> {
+        let instant = Instant::now();
         // create transaction ids
+        let int_sig = Instant::now();
         let signatures = block_info
             .transactions
             .iter()
             .map(|transaction| transaction.signature.clone())
             .collect_vec();
         self.create_transaction_ids(signatures).await?;
+        TIME_TO_SAVE_TRANSACTION.set(int_sig.elapsed().as_millis() as i64);
         // create account ids
         let accounts = block_info
             .heavily_locked_accounts
@@ -887,9 +907,11 @@ impl PostgresSession {
         let _ = self.accounts_for_transaction_sender.send(txs_accounts);
 
         // save account usage in blocks
+        let ins = Instant::now();
         self.save_account_usage_in_block(&block_info).await?;
+        TIME_TO_SAVE_BLOCK_ACCOUNTS.set(ins.elapsed().as_millis() as i64);
         self.save_block_info(&block_info).await?;
-
+        TIME_TO_SAVE_BLOCK.set(instant.elapsed().as_millis() as i64);
         Ok(())
     }
 }
