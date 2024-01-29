@@ -359,9 +359,10 @@ async fn main() -> anyhow::Result<()> {
         .collect_vec();
 
     let mut block_senders = vec![];
-    for i in 1..=4 
-    {
-        let s = postgres::Postgres::new_with_workmem(i).await.spawn_block_saver();
+    for i in 1..=4 {
+        let s = postgres::Postgres::new_with_workmem(i)
+            .await
+            .spawn_block_saver();
         block_senders.push(s);
     }
 

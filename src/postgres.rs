@@ -58,16 +58,19 @@ lazy_static::lazy_static! {
 
     static ref ACCOUNT_SAVE_TIME: IntGauge =
        register_int_gauge!(opts!("banking_stage_sidecar_account_save_time", "Account save time")).unwrap();
+
+    static ref BLOCK_INFO_SAVE_TIME: IntGauge =
+       register_int_gauge!(opts!("banking_stage_sidecar_block_info_save_time", "Block info save time")).unwrap();
 }
 
 #[derive(Clone)]
 pub struct TempTableTracker {
-    nb : usize,
+    nb: usize,
     count: Arc<AtomicU64>,
 }
 
 impl TempTableTracker {
-    pub fn new(nb:usize) -> Self {
+    pub fn new(nb: usize) -> Self {
         Self {
             nb,
             count: Arc::new(AtomicU64::new(1)),
@@ -87,11 +90,11 @@ impl TempTableTracker {
 #[derive(Clone)]
 pub struct PostgresSession {
     client: Arc<Client>,
-    temp_table_tracker : TempTableTracker,
+    temp_table_tracker: TempTableTracker,
 }
 
 impl PostgresSession {
-    pub async fn new(nb : usize) -> anyhow::Result<Self> {
+    pub async fn new(nb: usize) -> anyhow::Result<Self> {
         let pg_config = std::env::var("PG_CONFIG").context("env PG_CONFIG not found")?;
         let pg_config = pg_config.parse::<tokio_postgres::Config>()?;
 
@@ -125,7 +128,7 @@ impl PostgresSession {
 
         Ok(Self {
             client: Arc::new(client),
-            temp_table_tracker: TempTableTracker::new(nb)
+            temp_table_tracker: TempTableTracker::new(nb),
         })
     }
 
@@ -883,6 +886,7 @@ impl PostgresSession {
         self.create_accounts_for_transaction(accounts).await?;
         ACCOUNT_SAVE_TIME.set(ins_acc.elapsed().as_millis() as i64);
 
+        let instant_acc_tx: Instant = Instant::now();
         let txs_accounts = block_info
             .transactions
             .iter()
@@ -900,8 +904,6 @@ impl PostgresSession {
                     .collect(),
             })
             .collect_vec();
-
-        let instant_acc_tx: Instant = Instant::now();
         if let Err(e) = self.insert_accounts_for_transaction(txs_accounts).await {
             error!("Error inserting accounts for transactions : {e:?}");
         }
@@ -917,7 +919,11 @@ impl PostgresSession {
         let ins = Instant::now();
         self.save_account_usage_in_block(&block_info).await?;
         TIME_TO_SAVE_BLOCK_ACCOUNTS.set(ins.elapsed().as_millis() as i64);
+
+        let inst_block_info = Instant::now();
         self.save_block_info(&block_info).await?;
+        BLOCK_INFO_SAVE_TIME.set(inst_block_info.elapsed().as_millis() as i64);
+
         TIME_TO_SAVE_BLOCK.set(instant.elapsed().as_millis() as i64);
         Ok(())
     }
