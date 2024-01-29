@@ -61,6 +61,12 @@ lazy_static::lazy_static! {
 
     static ref BLOCK_INFO_SAVE_TIME: IntGauge =
        register_int_gauge!(opts!("banking_stage_sidecar_block_info_save_time", "Block info save time")).unwrap();
+
+    static ref TIME_TO_STORE_TX_ACCOUNT_OLD: IntGauge =
+       register_int_gauge!(opts!("banking_stage_sidecar_tx_account_old", "Account in tx account old")).unwrap();
+    
+    static ref TIME_TO_STORE_TX_ACCOUNT_NEW: IntGauge =
+       register_int_gauge!(opts!("banking_stage_sidecar_tx_account_new", "Account in tx account new")).unwrap();
 }
 
 #[derive(Clone)]
@@ -400,6 +406,8 @@ impl PostgresSession {
         &self,
         accounts_for_transaction: Vec<AccountsForTransaction>,
     ) -> anyhow::Result<()> {
+
+        let instant = Instant::now();
         let temp_table = self.get_new_temp_table();
         self.client
             .execute(
@@ -473,7 +481,9 @@ impl PostgresSession {
             rows,
             started_at.elapsed().as_millis()
         );
+        TIME_TO_STORE_TX_ACCOUNT_OLD.set(instant.elapsed().as_millis() as i64);
 
+        let instant = Instant::now();
         // merge data from temp table into accounts_map_transaction_latest
         // note: query uses the array_dedup_append postgres function to deduplicate and limit the array size
         // example: array_dedup_append('{8,3,2,1}', '{5,3}', 4) -> {2,1,5,3}
@@ -524,7 +534,7 @@ impl PostgresSession {
             num_rows,
             started_at.elapsed().as_millis()
         );
-
+        TIME_TO_STORE_TX_ACCOUNT_NEW.set(instant.elapsed().as_millis() as i64);
         self.drop_temp_table(temp_table_latest_agged).await?;
         self.drop_temp_table(temp_table).await?;
         Ok(())
