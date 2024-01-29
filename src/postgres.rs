@@ -30,7 +30,7 @@ use crate::{
     transaction_info::TransactionInfo,
 };
 
-const BLOCK_WRITE_BUFFER_SIZE: usize = 5;
+const BLOCK_WRITE_BUFFER_SIZE: usize = 256;
 const LIMIT_LATEST_TXS_PER_ACCOUNT: i64 = 100;
 
 lazy_static::lazy_static! {
