@@ -704,8 +704,25 @@ impl PostgresSession {
             ],
         );
         pin_mut!(writer);
+        const LIMIT: usize = 100;
+        let mut nb_read_accounts : usize = 0;
+        let mut nb_write_accounts : usize = 0;
         for account_usage in block_info.heavily_locked_accounts.iter() {
+            if nb_read_accounts >= LIMIT && nb_write_accounts >= LIMIT {
+                break;
+            }
             let is_writable = account_usage.is_write_locked;
+            if is_writable {
+                if nb_write_accounts >= LIMIT {
+                    continue;
+                }
+                nb_write_accounts += 1;
+            } else {
+                if nb_read_accounts >= LIMIT {
+                    continue;
+                }
+                nb_read_accounts += 1;
+            }
             let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(6);
             let pf_json = serde_json::to_string(&account_usage.prioritization_fee_data)?;
             args.push(&account_usage.key);
