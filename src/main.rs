@@ -152,7 +152,7 @@ async fn start_tracking_blocks(
     rpc_client: Arc<RpcClient>,
     grpc_block_addr: String,
     grpc_x_token: Option<String>,
-    block_sender_postgres: Sender<BlockInfo>,
+    block_sender_postgres: Vec<Sender<BlockInfo>>,
     slot: Arc<AtomicU64>,
     alts_list: Vec<Pubkey>,
 ) {
@@ -225,7 +225,6 @@ async fn start_tracking_blocks(
     // let data = atl_store.serialize();
     // let mut alts_file = tokio::fs::File::create("alt_binary.bin").await.unwrap();
     // alts_file.write_all(&data).await.unwrap();
-
     loop {
         let mut blocks_subs = HashMap::new();
         blocks_subs.insert(
@@ -284,7 +283,6 @@ async fn start_tracking_blocks(
             let Some(update) = message.update_oneof else {
                 continue;
             };
-            block_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             match update {
                 yellowstone_grpc_proto_original::prelude::subscribe_update::UpdateOneof::Block(
                     block,
@@ -293,9 +291,13 @@ async fn start_tracking_blocks(
                     BLOCK_TXS.set(block.transactions.len() as i64);
                     BANKING_STAGE_BLOCKS_COUNTER.inc();
                     BANKING_STAGE_BLOCKS_TASK.inc();
-                    let block_sender_postgres = block_sender_postgres.clone();
+
+                    let count = block_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as usize;
+                    let pg_size = block_sender_postgres.len();
+                    let block_sender = block_sender_postgres[count%pg_size].clone();
                     let slot = slot.clone();
                     let atl_store = atl_store.clone();
+
                     tokio::spawn(async move {
                         // to support address lookup tables delay processing a littlebit
                         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -303,7 +305,7 @@ async fn start_tracking_blocks(
                         TXERROR_COUNT.add(
                             block_info.processed_transactions - block_info.successful_transactions,
                         );
-                        if let Err(e) = postgres::send_block_info_to_buffer(block_sender_postgres, block_info).await {
+                        if let Err(e) = postgres::send_block_info_to_buffer(block_sender, block_info).await {
                             panic!("Error saving block {}", e);
                         }
                         slot.store(block.slot, std::sync::atomic::Ordering::Relaxed);
@@ -357,7 +359,7 @@ async fn main() -> anyhow::Result<()> {
         .map(|x| Pubkey::from_str(&x).unwrap())
         .collect_vec();
 
-    let block_sender = postgres1.spawn_block_saver();
+    let block_senders = (0..4).map(|x| postgres1.spawn_block_saver()).collect_vec();
 
     postgres2.spawn_transaction_infos_saver(map_of_infos.clone(), slot.clone());
 
@@ -384,7 +386,7 @@ async fn main() -> anyhow::Result<()> {
             rpc_client,
             gprc_block_addr,
             args.grpc_x_token,
-            block_sender,
+            block_senders,
             slot,
             alts_list,
         )
