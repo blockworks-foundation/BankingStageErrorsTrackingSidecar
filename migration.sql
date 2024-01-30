@@ -151,3 +151,20 @@ BEGIN
     RETURN  tmplist[(len + 1 - n_limit):];
 END
 $$ LANGUAGE plpgsql IMMUTABLE CALLED ON NULL INPUT;
+
+
+DROP FUNCTION array_dedup_append;
+
+-- select banking_stage_results_2.array_prepend_and_truncate('{8,3,2,1}', '{5,3}', 3); -- 5,3,8
+CREATE OR REPLACE FUNCTION banking_stage_results_2.array_prepend_and_truncate(base bigint[], append bigint[], n_limit int)
+    RETURNS bigint[]
+AS $$
+DECLARE
+    tmplist  bigint[];
+    len int;
+BEGIN
+    tmplist := append || base;
+    len := CARDINALITY(tmplist);
+    RETURN  tmplist[:n_limit];
+END
+$$ LANGUAGE plpgsql IMMUTABLE CALLED ON NULL INPUT;
