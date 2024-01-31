@@ -200,32 +200,17 @@ impl PostgresSession {
     }
 
     pub async fn create_transaction_ids(&self, signatures: HashSet<String>) -> anyhow::Result<()> {
-        // create temp table
-        let temp_table = self.get_new_temp_table();
-
-        self.client
-            .execute(
-                format!(
-                    r#"
-        CREATE TEMP TABLE {}(
+        let statement = r#"
+        CREATE TEMP TABLE temp_new_transactions_raw(
             signature char(88)
-        );
-        "#,
-                    temp_table
-                )
-                .as_str(),
-                &[],
-            )
-            .await?;
+        )"#;
+        self.client.execute(statement, &[]).await?;
 
-        let statement = format!(
-            r#"
-            COPY {}(
+        let statement = r#"
+            COPY temp_new_transactions_raw(
                 signature
             ) FROM STDIN BINARY
-        "#,
-            temp_table
-        );
+        "#.to_string();
         let started_at = Instant::now();
         let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement.as_str()).await?;
         let writer = BinaryCopyInWriter::new(sink, &[Type::TEXT]);
@@ -240,22 +225,18 @@ impl PostgresSession {
             started_at.elapsed().as_millis()
         );
 
-        let statement = format!(
-            r#"
-        INSERT INTO banking_stage_results_2.transactions(signature) SELECT signature from {}
-        ON CONFLICT DO NOTHING
-        "#,
-            temp_table
-        );
+        let statement = r#"
+            INSERT INTO banking_stage_results_2.transactions(signature) SELECT signature FROM temp_new_transactions_raw
+            ON CONFLICT DO NOTHING
+        "#;
         let started_at = Instant::now();
-        let num_rows = self.client.execute(statement.as_str(), &[]).await?;
+        let num_rows = self.client.execute(statement, &[]).await?;
         debug!(
             "inserted {} signatures in transactions table in {}ms",
             num_rows,
             started_at.elapsed().as_millis()
         );
 
-        self.drop_temp_table(temp_table).await?;
         Ok(())
     }
 
