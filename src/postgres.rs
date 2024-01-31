@@ -171,8 +171,16 @@ impl PostgresSession {
     }
 
     pub async fn clear_session(&self) {
+        // see https://www.postgresql.org/docs/current/sql-discard.html
+        // CLOSE ALL -> drop potental cursors
+        // RESET ALL -> we do not want (would reset work_mem)
+        // DEALLOCATE -> would drop prepared statements which we do not use ATM
+        // DISCARD PLANS -> we want to keep the plans
+        // DISCARD SEQUENCES -> we want to keep the sequences
         self.client
-            .execute("DISCARD ALL", &[])
+            .batch_execute(r#"
+            DISCARD TEMP;
+            CLOSE ALL;"#)
             .await
             .unwrap();
         debug!("Clear postgres session");
