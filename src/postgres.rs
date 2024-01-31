@@ -608,28 +608,23 @@ impl PostgresSession {
     }
 
     pub async fn save_account_usage_in_block(&self, block_info: &BlockInfo) -> anyhow::Result<()> {
-        let temp_table = self.get_new_temp_table();
         self.client
             .execute(
-                format!(
-                    "CREATE TEMP TABLE {}(
+                "CREATE TEMP TABLE temp_new_account_usage_raw(
             account_key char(44),
             slot BIGINT,
             is_write_locked BOOL,
             total_cu_requested BIGINT,
             total_cu_consumed BIGINT,
             prioritization_fees_info text
-        )",
-                    temp_table
-                )
+        )".to_string()
                 .as_str(),
                 &[],
             )
             .await?;
 
-        let statement = format!(
-            r#"
-            COPY {}(
+        let statement = r#"
+            COPY temp_new_account_usage_raw(
                 account_key,
                 slot,
                 is_write_locked,
@@ -637,9 +632,7 @@ impl PostgresSession {
                 total_cu_consumed,
                 prioritization_fees_info
             ) FROM STDIN BINARY
-        "#,
-            temp_table
-        );
+        "#.to_string();
         let started_at = Instant::now();
         let sink: CopyInSink<bytes::Bytes> = self.copy_in(statement.as_str()).await?;
         let writer = BinaryCopyInWriter::new(
@@ -690,8 +683,7 @@ impl PostgresSession {
             started_at.elapsed().as_millis()
         );
 
-        let statement = format!(
-            r#"
+        let statement = r#"
             INSERT INTO banking_stage_results_2.accounts_map_blocks
             (   acc_id,
                 slot,
@@ -700,7 +692,7 @@ impl PostgresSession {
                 total_cu_consumed,
                 prioritization_fees_info
             )
-                SELECT 
+                SELECT
                     ( select acc_id from banking_stage_results_2.accounts where account_key = t.account_key ),
                     t.slot,
                     t.is_write_locked,
@@ -713,7 +705,7 @@ impl PostgresSession {
                     is_write_locked,
                     total_cu_requested,
                     total_cu_consumed,
-                    prioritization_fees_info from {}
+                    prioritization_fees_info from temp_new_account_usage_raw
                 )
                 as t (account_key,
                     slot,
@@ -723,9 +715,7 @@ impl PostgresSession {
                     prioritization_fees_info
                 )
                 ON CONFLICT DO NOTHING
-        "#,
-            temp_table
-        );
+        "#.to_string();
         let started_at = Instant::now();
         let num_rows = self.client.execute(statement.as_str(), &[]).await?;
         debug!(
@@ -734,7 +724,6 @@ impl PostgresSession {
             started_at.elapsed().as_millis()
         );
 
-        self.drop_temp_table(temp_table).await?;
         Ok(())
     }
 
