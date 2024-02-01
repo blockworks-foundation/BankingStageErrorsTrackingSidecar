@@ -68,5 +68,6 @@ async fn main() -> anyhow::Result<()> {
     info!("inserted {} accounts_for_transaction in {:?}", batch_size, started_at.elapsed());
     //  inserted 4 accounts_for_transaction in 18.47626575s
 
+    drop(postgres_session);
     Ok(())
 }
