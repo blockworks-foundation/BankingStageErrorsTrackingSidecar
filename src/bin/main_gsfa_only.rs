@@ -26,14 +26,23 @@ use grpc_banking_transactions_notifications::postgres::{AccountsForTransaction, 
 
 
 
+#[derive(Parser, Debug, Clone)]
+#[command(author, version, about, long_about = None)]
+pub struct Args {
+    #[arg(short, long)]
+    pub tx_count: usize,
+}
+
 #[tokio::main()]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
+    let Args { tx_count } = Args::parse();
+
     let postgres_session = PostgresSession::new(0).await.unwrap();
 
 
-    let amt_data = (1..5).map(|i| {
+    let amt_data = (0..tx_count).map(|i| {
         let tx_sig = Signature::new_unique();
 
         let accounts = (1..10).map(|j| {
