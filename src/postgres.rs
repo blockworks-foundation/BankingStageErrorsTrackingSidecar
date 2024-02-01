@@ -1345,6 +1345,22 @@ pub struct AccountUsed {
     is_atl: bool,
 }
 
+impl AccountUsed {
+    pub fn new(key: String, writable: bool, is_signer: bool, is_atl: bool) -> Self {
+        Self {
+            key,
+            writable,
+            is_signer,
+            is_atl,
+        }
+    }
+
+    pub fn pubkey(&self) -> String {
+        self.key.clone()
+
+    }
+}
+
 pub struct AccountsForTransaction {
     pub signature: String,
     pub accounts: Vec<AccountUsed>,
