@@ -127,26 +127,11 @@ CLUSTER banking_stage_results_2.transactions using transactions_pkey;
 
 CLUSTER banking_stage_results_2.accounts using accounts_pkey;
 
-CREATE TABLE banking_stage_results_2.accounts_map_transaction_latest_parted(
-   acc_id BIGINT PRIMARY KEY,
-   tx_ids BIGINT[]
-) PARTITION BY HASH (acc_id);
-
-DO $$
-    DECLARE part_no integer;
-        DECLARE num_parts integer := 4;
-    BEGIN
-        for part_no in 0..num_parts-1 loop
-            EXECUTE format(
-                    '
-                    CREATE TABLE banking_stage_results_2.accounts_map_transaction_latest_part%s
-                    PARTITION OF banking_stage_results_2.accounts_map_transaction_latest_parted
-                    FOR VALUES WITH (MODULUS %s, REMAINDER %s)
-                    WITH (FILLFACTOR=80)
-                    ', part_no, num_parts, part_no);
-        end loop;
-END; $$;
-ALTER TABLE banking_stage_results_2.accounts_map_transaction_latest_parted RENAME TO accounts_map_transaction_latest;
+CREATE TABLE banking_stage_results_2.accounts_map_transaction_latest(
+    acc_id BIGINT PRIMARY KEY,
+    -- sorted: oldest to latest, max 1000
+    tx_ids BIGINT[]
+);
 
 CREATE OR REPLACE FUNCTION array_dedup_append(base bigint[], append bigint[], n_limit int)
     RETURNS bigint[]
