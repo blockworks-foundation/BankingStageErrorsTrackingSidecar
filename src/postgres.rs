@@ -32,8 +32,7 @@ use crate::{
 };
 
 const BLOCK_WRITE_BUFFER_SIZE: usize = 5;
-// note: need to add some a bit more transactions in case of duplicates
-const LIMIT_LATEST_TXS_PER_ACCOUNT: i64 = 1000 + 100;
+const LIMIT_LATEST_TXS_PER_ACCOUNT: i64 = 100;
 
 lazy_static::lazy_static! {
     static ref ACCOUNTS_SAVING_QUEUE: IntGauge =
@@ -442,8 +441,7 @@ impl PostgresSession {
             &[Type::TEXT, Type::TEXT, Type::BOOL, Type::BOOL, Type::BOOL],
         );
         pin_mut!(writer);
-        // note: latest transaction must land first in the array
-        for acc_tx in accounts_for_transaction.iter().rev() {
+        for acc_tx in accounts_for_transaction {
             for acc in &acc_tx.accounts {
                 let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(4);
                 args.push(&acc.key);
@@ -503,7 +501,7 @@ impl PostgresSession {
             )
             SELECT
                 acc_id,
-                banking_stage_results_2.array_prepend_and_truncate(
+                array_dedup_append(
                     (SELECT tx_ids FROM banking_stage_results_2.accounts_map_transaction_latest WHERE acc_id=amt_new.acc_id),
                     amt_new.tx_agged,
                     {limit}) AS tx_ids_agg
