@@ -32,7 +32,8 @@ use crate::{
 };
 
 const BLOCK_WRITE_BUFFER_SIZE: usize = 5;
-const LIMIT_LATEST_TXS_PER_ACCOUNT: i64 = 100;
+// requires 125.000.000 * 8 bytes * LIMIT_LATEST_TXS_PER_ACCOUNT
+const LIMIT_LATEST_TXS_PER_ACCOUNT: i64 = 100+20;
 
 lazy_static::lazy_static! {
     static ref ACCOUNTS_SAVING_QUEUE: IntGauge =
