@@ -148,3 +148,50 @@ BEGIN
     RETURN  tmplist[(len + 1 - n_limit):];
 END
 $$ LANGUAGE plpgsql IMMUTABLE CALLED ON NULL INPUT;
+
+
+ALTER TABLE banking_stage_results_2.accounts
+    SET (
+        autovacuum_vacuum_scale_factor=0,
+        autovacuum_vacuum_threshold=100,
+        autovacuum_vacuum_insert_scale_factor=0,
+        autovacuum_vacuum_insert_threshold=100,
+        autovacuum_analyze_scale_factor=0,
+        autovacuum_analyze_threshold=100
+        );
+
+ALTER TABLE banking_stage_results_2.transactions
+    SET (
+        autovacuum_vacuum_scale_factor=0,
+        autovacuum_vacuum_threshold=1000,
+        autovacuum_vacuum_insert_scale_factor=0,
+        autovacuum_vacuum_insert_threshold=1000,
+        autovacuum_analyze_scale_factor=0,
+        autovacuum_analyze_threshold=1000
+        );
+
+ALTER TABLE banking_stage_results_2.accounts_map_transaction
+    SET (
+        autovacuum_vacuum_scale_factor=0,
+        autovacuum_vacuum_threshold=10000,
+        autovacuum_vacuum_insert_scale_factor=0,
+        autovacuum_vacuum_insert_threshold=10000,
+        autovacuum_analyze_scale_factor=0,
+        autovacuum_analyze_threshold=10000
+    );
+
+ALTER TABLE banking_stage_results_2.accounts_map_transaction_latest
+    SET (
+        autovacuum_vacuum_scale_factor=0,
+        autovacuum_vacuum_threshold=100,
+        autovacuum_vacuum_insert_scale_factor=0,
+        autovacuum_vacuum_insert_threshold=100,
+        autovacuum_analyze_scale_factor=0,
+        autovacuum_analyze_threshold=100
+        );
+
+ALTER TABLE banking_stage_results_2.accounts_map_transaction_latest ALTER COLUMN tx_ids SET STORAGE main;
+
+ALTER TABLE banking_stage_results_2.accounts_map_transaction_latest SET (FILLFACTOR=90);
+ALTER INDEX banking_stage_results_2.accounts_map_transaction_latest_pkey SET (FILLFACTOR=50);
+
