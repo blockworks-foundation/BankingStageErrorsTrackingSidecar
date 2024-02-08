@@ -8,11 +8,11 @@ CREATE TABLE banking_stage_results_2.transactions(
 
 CREATE TABLE banking_stage_results_2.transaction_infos (
   transaction_id BIGINT PRIMARY KEY,
-  processed_slot BIGINT,
-  is_successful BOOL,
-  cu_requested BIGINT,
-  cu_consumed BIGINT,
-  prioritization_fees BIGINT,
+  processed_slot BIGINT NOT NULL,
+  is_successful BOOL NOT NULL,
+  cu_requested BIGINT NOT NULL,
+  cu_consumed BIGINT NOT NULL,
+  prioritization_fees BIGINT NOT NULL,
   supp_infos text
 );
 
@@ -24,8 +24,8 @@ CREATE TABLE banking_stage_results_2.errors (
 CREATE TABLE banking_stage_results_2.transaction_slot (
   transaction_id BIGINT,
   slot BIGINT,
-  error_code INT,
-  count INT,
+  error_code INT NOT NULL,
+  count INT NOT NULL,
   utc_timestamp TIMESTAMP NOT NULL,
   PRIMARY KEY (transaction_id, slot, error_code)
 );
@@ -36,12 +36,12 @@ CREATE INDEX idx_transaction_slot_slot ON banking_stage_results_2.transaction_sl
 
 CREATE TABLE banking_stage_results_2.blocks (
   slot BIGINT PRIMARY KEY,
-  block_hash char(44),
-  leader_identity char(44),
-  successful_transactions BIGINT,
-  processed_transactions BIGINT,
-  total_cu_used BIGINT,
-  total_cu_requested BIGINT,
+  block_hash varchar(44),
+  leader_identity varchar(44) NOT NULL,
+  successful_transactions BIGINT NOT NULL,
+  processed_transactions BIGINT NOT NULL,
+  total_cu_used BIGINT NOT NULL,
+  total_cu_requested BIGINT NOT NULL,
   supp_infos text
 );
 
@@ -52,23 +52,23 @@ CREATE TABLE banking_stage_results_2.accounts(
 );
 
 CREATE TABLE banking_stage_results_2.accounts_map_transaction(
-  acc_id BIGINT,
-  transaction_id BIGINT,
-  is_writable BOOL,
-  is_signer BOOL,
-  is_atl BOOL,
+  transaction_id BIGINT NOT NULL,
+  acc_id BIGINT NOT NULL,
+  is_writable BOOL NOT NULL,
+  is_signer BOOL NOT NULL,
+  is_atl BOOL NOT NULL,
   PRIMARY KEY (transaction_id, acc_id)
 );
 
 CREATE INDEX idx_blocks_block_hash ON banking_stage_results_2.blocks(block_hash);
 
 CREATE TABLE banking_stage_results_2.accounts_map_blocks (
-  acc_id BIGINT,
-  slot BIGINT,
-  is_write_locked BOOL,
-  total_cu_consumed BIGINT,
-  total_cu_requested BIGINT,
-  prioritization_fees_info text,
+  acc_id BIGINT NOT NULL,
+  slot BIGINT NOT NULL,
+  is_write_locked BOOL NOT NULL,
+  total_cu_consumed BIGINT NOT NULL,
+  total_cu_requested BIGINT NOT NULL,
+  prioritization_fees_info text NOT NULL,
   supp_infos text,
   PRIMARY KEY (acc_id, slot, is_write_locked)
 );

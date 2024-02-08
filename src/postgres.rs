@@ -200,7 +200,7 @@ impl PostgresSession {
                 format!(
                     r#"
         CREATE TEMP TABLE {}(
-            signature varchar(88)
+            signature varchar(88) NOT NULL
         );
         "#,
                     temp_table
@@ -262,7 +262,7 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            key TEXT
+            key TEXT NOT NULL
         );",
                     temp_table
                 )
@@ -322,11 +322,11 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            sig varchar(88),
-            slot BIGINT,
-            error_code INT,
-            count INT,
-            utc_timestamp TIMESTAMP
+            sig varchar(88) NOT NULL,
+            slot BIGINT NOT NULL,
+            error_code INT NOT NULL,
+            count INT NOT NULL,
+            utc_timestamp TIMESTAMP NOT NULL
         );",
                     temp_table
                 )
@@ -414,11 +414,11 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            account_key varchar(44),
-            signature varchar(88),
-            is_writable BOOL,
-            is_signer BOOL,
-            is_atl BOOL
+            account_key varchar(44) NOT NULL,
+            signature varchar(88) NOT NULL,
+            is_writable BOOL NOT NULL,
+            is_signer BOOL NOT NULL,
+            is_atl BOOL NOT NULL
         );",
                     temp_table
                 )
@@ -551,12 +551,12 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            signature varchar(88),
-            processed_slot BIGINT,
-            is_successful BOOL,
-            cu_requested BIGINT,
-            cu_consumed BIGINT,
-            prioritization_fees BIGINT,
+            signature varchar(88) NOT NULL,
+            processed_slot BIGINT NOT NULL,
+            is_successful BOOL  NOT NULL,
+            cu_requested BIGINT NOT NULL,
+            cu_consumed BIGINT NOT NULL,
+            prioritization_fees BIGINT NOT NULL,
             supp_infos text
         )",
                     temp_table
@@ -648,11 +648,11 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            account_key varchar(44),
-            slot BIGINT,
-            is_write_locked BOOL,
-            total_cu_requested BIGINT,
-            total_cu_consumed BIGINT,
+            account_key varchar(44) NOT NULL,
+            slot BIGINT NOT NULL,
+            is_write_locked BOOL NOT NULL,
+            total_cu_requested BIGINT NOT NULL,
+            total_cu_consumed BIGINT NOT NULL,
             prioritization_fees_info text
         )",
                     temp_table
