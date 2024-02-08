@@ -262,7 +262,7 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            key TEXT NOT NULL
+            account_key VARCHAR(44) NOT NULL
         );",
                     temp_table
                 )
@@ -274,7 +274,7 @@ impl PostgresSession {
         let statement = format!(
             r#"
             COPY {}(
-                key
+                account_key
             ) FROM STDIN BINARY
         "#,
             temp_table
@@ -295,7 +295,7 @@ impl PostgresSession {
 
         let statement = format!(
             r#"
-        INSERT INTO banking_stage_results_2.accounts(account_key) SELECT key from {}
+        INSERT INTO banking_stage_results_2.accounts(account_key) SELECT account_key from {}
         ON CONFLICT(account_key) DO NOTHING
         "#,
             temp_table
