@@ -235,7 +235,7 @@ impl PostgresSession {
         let statement = format!(
             r#"
         INSERT INTO banking_stage_results_2.transactions(signature) SELECT signature from {}
-        ON CONFLICT DO NOTHING
+        ON CONFLICT(signature) DO NOTHING
         "#,
             temp_table
         );
@@ -296,7 +296,7 @@ impl PostgresSession {
         let statement = format!(
             r#"
         INSERT INTO banking_stage_results_2.accounts(account_key) SELECT key from {}
-        ON CONFLICT DO NOTHING
+        ON CONFLICT(account_key) DO NOTHING
         "#,
             temp_table
         );

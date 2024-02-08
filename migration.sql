@@ -1,9 +1,9 @@
 CREATE SCHEMA banking_stage_results_2;
 
 CREATE TABLE banking_stage_results_2.transactions(
-  signature char(88) primary key,
-  transaction_id bigserial,
-  UNIQUE(transaction_id)
+  transaction_id bigserial PRIMARY KEY,
+  signature varchar(88) NOT NULL,
+  UNIQUE(signature)
 );
 
 CREATE TABLE banking_stage_results_2.transaction_infos (
@@ -46,8 +46,8 @@ CREATE TABLE banking_stage_results_2.blocks (
 );
 
 CREATE TABLE banking_stage_results_2.accounts(
-	acc_id bigserial primary key,
-	account_key char(44),
+	acc_id bigserial PRIMARY KEY,
+	account_key varchar(44) NOT NULL,
 	UNIQUE (account_key)
 );
 
