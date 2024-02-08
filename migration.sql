@@ -60,9 +60,6 @@ CREATE TABLE banking_stage_results_2.accounts_map_transaction(
   PRIMARY KEY (transaction_id, acc_id)
 );
 
-CREATE INDEX accounts_map_transaction_acc_id ON banking_stage_results_2.accounts_map_transaction(acc_id);
-CREATE INDEX accounts_map_transaction_transaction_id ON banking_stage_results_2.accounts_map_transaction(transaction_id);
-
 CREATE INDEX idx_blocks_block_hash ON banking_stage_results_2.blocks(block_hash);
 
 CREATE TABLE banking_stage_results_2.accounts_map_blocks (
