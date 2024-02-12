@@ -1328,7 +1328,7 @@ impl Postgres {
                 }
 
                 if !txs_to_store.is_empty() {
-                    debug!("saving transaction infos for {} txs", txs_to_store.len());
+                    info!("saving transaction infos for {} txs", txs_to_store.len());
                     let batches = txs_to_store
                         .iter()
                         .filter_map(|key| map_of_transaction.remove(key))
