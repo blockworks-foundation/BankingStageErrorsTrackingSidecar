@@ -1319,14 +1319,16 @@ impl Postgres {
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 let slot = slot.load(std::sync::atomic::Ordering::Relaxed);
                 let mut txs_to_store = vec![];
-                for tx in map_of_transaction.iter() {
-                    if slot > tx.key().1 + 300 {
+                // restore transactions sort order
+                for tx in map_of_transaction.iter()
+                    .sorted_by_key(|txi| txi.write_version) {
+                    if tx.key().1 < slot - 300 {
                         txs_to_store.push(tx.key().clone());
                     }
                 }
 
                 if !txs_to_store.is_empty() {
-                    debug!("saving transaction infos for {}", txs_to_store.len());
+                    debug!("saving transaction infos for {} txs", txs_to_store.len());
                     let batches = txs_to_store
                         .iter()
                         .filter_map(|key| map_of_transaction.remove(key))
