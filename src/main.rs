@@ -55,6 +55,7 @@ lazy_static::lazy_static! {
 pub async fn start_tracking_banking_stage_errors(
     grpc_address: String,
     map_of_infos: Arc<DashMap<(String, u64), TransactionInfo>>,
+    error_plugin_write_version: Arc<AtomicU64>,
     slot: Arc<AtomicU64>,
     _subscribe_to_slots: bool,
 ) {
@@ -128,7 +129,9 @@ pub async fn start_tracking_banking_stage_errors(
                             tx_info.add_notification(&transaction);
                         }
                         None => {
-                            let tx_info = TransactionInfo::new(&transaction);
+                            // map_of_infos might get populated by parallel writers if multiple geyser sources are configured
+                            let write_version = error_plugin_write_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let tx_info = TransactionInfo::new(&transaction, write_version);
                             map_of_infos.insert((sig, transaction.slot), tx_info);
                         }
                     }
@@ -341,6 +344,8 @@ async fn main() -> anyhow::Result<()> {
 
     let grpc_block_addr = args.grpc_address_to_fetch_blocks;
     let map_of_infos = Arc::new(DashMap::<(String, u64), TransactionInfo>::new());
+    // maintain a global serial version for deterministic transaction ordering
+    let error_plugin_write_version = Arc::new(AtomicU64::new(0));
 
     let postgres1 = postgres::Postgres::new_with_workmem(0).await;
     let slot = Arc::new(AtomicU64::new(0));
@@ -375,10 +380,12 @@ async fn main() -> anyhow::Result<()> {
             let address = address.clone();
             let map_of_infos = map_of_infos.clone();
             let slot = slot.clone();
+            let global_error_plugin_write_version = error_plugin_write_version.clone();
             tokio::spawn(async move {
                 start_tracking_banking_stage_errors(
                     address,
                     map_of_infos,
+                    global_error_plugin_write_version,
                     slot,
                     no_block_subscription,
                 )

@@ -234,7 +234,9 @@ impl PostgresSession {
 
         let statement = format!(
             r#"
-        INSERT INTO banking_stage_results_2.transactions(signature) SELECT signature from {}
+        INSERT INTO banking_stage_results_2.transactions(signature)
+        SELECT signature FROM {}
+        ORDER BY signature
         ON CONFLICT DO NOTHING
         "#,
             temp_table
@@ -295,7 +297,9 @@ impl PostgresSession {
 
         let statement = format!(
             r#"
-        INSERT INTO banking_stage_results_2.accounts(account_key) SELECT key from {}
+        INSERT INTO banking_stage_results_2.accounts(account_key)
+        SELECT key FROM {}
+        ORDER BY key
         ON CONFLICT DO NOTHING
         "#,
             temp_table
@@ -386,7 +390,9 @@ impl PostgresSession {
                 FROM (
                     SELECT sig, slot, error_code, count, utc_timestamp from {}
                 )
-                as t (sig, slot, error_code, count, utc_timestamp) ON CONFLICT DO NOTHING
+                as t (sig, slot, error_code, count, utc_timestamp)
+                ORDER BY 1,2,3 -- sorry
+                ON CONFLICT DO NOTHING
         "#,
             temp_table
         );
@@ -460,6 +466,7 @@ impl PostgresSession {
             started_at.elapsed().as_millis()
         );
 
+        // note: no lock ordering here, as the accounts_map_transaction does not seem to cause deadlocks (issue 58)
         // merge data from temp table into accounts_map_transaction
         let statement = format!(
             r#"
@@ -524,6 +531,7 @@ impl PostgresSession {
             r#"
             INSERT INTO banking_stage_results_2.accounts_map_transaction_latest(acc_id, tx_ids)
             SELECT acc_id, tx_ids_agg FROM {temp_table_name}
+            ORDER BY acc_id
             ON CONFLICT (acc_id) DO UPDATE SET tx_ids = EXCLUDED.tx_ids
         "#,
             temp_table_name = temp_table_latest_agged
@@ -626,6 +634,7 @@ impl PostgresSession {
                     t.prioritization_fees,
                     t.supp_infos
                 FROM {} AS t
+                ORDER BY 1 -- sorry
                 ON CONFLICT DO NOTHING
         "#,
             temp_table
@@ -757,6 +766,7 @@ impl PostgresSession {
                     total_cu_consumed,
                     prioritization_fees_info
                 )
+                ORDER BY 1,2 -- sorry
                 ON CONFLICT DO NOTHING
         "#,
             temp_table
@@ -1309,14 +1319,16 @@ impl Postgres {
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 let slot = slot.load(std::sync::atomic::Ordering::Relaxed);
                 let mut txs_to_store = vec![];
-                for tx in map_of_transaction.iter() {
-                    if slot > tx.key().1 + 300 {
+                // restore transactions sort order
+                for tx in map_of_transaction.iter()
+                    .sorted_by_key(|txi| txi.write_version) {
+                    if tx.key().1 < slot - 300 {
                         txs_to_store.push(tx.key().clone());
                     }
                 }
 
                 if !txs_to_store.is_empty() {
-                    debug!("saving transaction infos for {}", txs_to_store.len());
+                    info!("saving transaction infos for {} txs", txs_to_store.len());
                     let batches = txs_to_store
                         .iter()
                         .filter_map(|key| map_of_transaction.remove(key))

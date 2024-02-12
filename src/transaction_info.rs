@@ -79,10 +79,12 @@ pub struct TransactionInfo {
     pub slot: u64,
     pub utc_timestamp: DateTime<Utc>,
     pub account_used: Vec<(String, bool)>,
+    // local write_version used in lite-rpc
+    pub write_version: u64,
 }
 
 impl TransactionInfo {
-    pub fn new(notification: &SubscribeUpdateBankingTransactionResults) -> Self {
+    pub fn new(notification: &SubscribeUpdateBankingTransactionResults, global_error_plugin_write_version: u64) -> Self {
         let mut errors = HashMap::new();
         // Get time
         let utc_timestamp = Utc::now();
@@ -107,6 +109,7 @@ impl TransactionInfo {
             slot: notification.slot,
             utc_timestamp,
             account_used,
+            write_version: global_error_plugin_write_version,
         }
     }
 
