@@ -7,6 +7,8 @@ CREATE TABLE banking_stage_results_2.transactions(
   signature varchar(88) NOT NULL,
   UNIQUE(signature)
 );
+-- page layout: rows are small and must store in main
+ALTER TABLE banking_stage_results_2.transactions SET (toast_tuple_threshold=2000);
 
 CREATE TABLE banking_stage_results_2.transaction_infos (
   transaction_id BIGINT PRIMARY KEY,
@@ -17,11 +19,13 @@ CREATE TABLE banking_stage_results_2.transaction_infos (
   prioritization_fees BIGINT NOT NULL,
   supp_infos text
 );
+ALTER TABLE banking_stage_results_2.transaction_infos SET (toast_tuple_threshold=2000);
 
 CREATE TABLE banking_stage_results_2.errors (
   error_code int primary key,
   error_text text
 );
+ALTER TABLE banking_stage_results_2.errors SET (toast_tuple_threshold=2000);
 
 CREATE TABLE banking_stage_results_2.transaction_slot (
   transaction_id BIGINT,
@@ -31,6 +35,7 @@ CREATE TABLE banking_stage_results_2.transaction_slot (
   utc_timestamp TIMESTAMP NOT NULL,
   PRIMARY KEY (transaction_id, slot, error_code)
 );
+ALTER TABLE banking_stage_results_2.transaction_slot SET (toast_tuple_threshold=2000);
 
 
 CREATE INDEX idx_transaction_slot_timestamp ON banking_stage_results_2.transaction_slot(utc_timestamp);
@@ -46,12 +51,14 @@ CREATE TABLE banking_stage_results_2.blocks (
   total_cu_requested BIGINT NOT NULL,
   supp_infos text
 );
+ALTER TABLE banking_stage_results_2.blocks SET (toast_tuple_threshold=2000);
 
 CREATE TABLE banking_stage_results_2.accounts(
 	acc_id bigserial PRIMARY KEY,
 	account_key varchar(44) NOT NULL,
 	UNIQUE (account_key)
 );
+ALTER TABLE banking_stage_results_2.accounts SET (toast_tuple_threshold=2000);
 
 CREATE TABLE banking_stage_results_2.accounts_map_transaction(
   transaction_id BIGINT NOT NULL,
@@ -61,6 +68,7 @@ CREATE TABLE banking_stage_results_2.accounts_map_transaction(
   is_atl BOOL NOT NULL,
   PRIMARY KEY (transaction_id, acc_id)
 );
+ALTER TABLE banking_stage_results_2.accounts_map_transaction SET (toast_tuple_threshold=2000);
 
 CREATE INDEX idx_blocks_block_hash ON banking_stage_results_2.blocks(block_hash);
 
@@ -74,6 +82,7 @@ CREATE TABLE banking_stage_results_2.accounts_map_blocks (
   supp_infos text,
   PRIMARY KEY (acc_id, slot, is_write_locked)
 );
+ALTER TABLE banking_stage_results_2.accounts_map_blocks SET (toast_tuple_threshold=2000);
 CREATE INDEX idx_accounts_map_blocks_slot ON banking_stage_results_2.accounts_map_blocks(slot);
 
 insert into banking_stage_results_2.errors (error_text, error_code) VALUES 
@@ -119,6 +128,7 @@ CREATE TABLE banking_stage_results_2.accounts_map_transaction_latest(
     -- sorted: oldest to latest, max 1000
     tx_ids BIGINT[]
 );
+ALTER TABLE banking_stage_results_2.accounts_map_transaction_latest SET (toast_tuple_threshold=2000)
 
 CREATE OR REPLACE FUNCTION array_dedup_append(base bigint[], append bigint[], n_limit int)
     RETURNS bigint[]
