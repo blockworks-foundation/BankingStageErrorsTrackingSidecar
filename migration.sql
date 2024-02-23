@@ -1,6 +1,6 @@
 
 -- for initial database setup start with init-database.sql
-
+CREATE SCHEMA banking_stage_results_2;
 
 CREATE TABLE banking_stage_results_2.transactions(
                                                      transaction_id bigserial PRIMARY KEY,
