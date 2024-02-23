@@ -1,19 +1,17 @@
-# TO INSTALL POSTGRES SCHEMA AND DATABASE
+# BankingStage Sidecar
+This is a sidecar application for the BankingStage project. It is responsible for importing data from the Solana blockchain into the PostgreSQL database.
+Data is retrieved via Solana RPC and Geysers gRPC API.
 
-sudo -u postgres psql postgres
-###### in postgres
-create data
-create database mangolana;
-grant all privileges on database mangolana to galactus;
+## Database Configuration
+### Database Roles
+* `bankingstage_dashboard` - read-only access to the database for the dashboard web application
+* `bankingstage_sidecar` - write access to the database for the sidecar importer
 
+### Configure sidecar PostgreSQL connection
+export PG_CONFIG="host=localhost dbname=bankingstage user=bankingstage_dashboard password=test sslmode=disable"
 
-psql -d mangolana < migration.sql
+### Database Schema
+The database schema is defined in the [migration.sql](migration.sql) file.
+For new database installations start with the [init-database.sql](init-database.sql) file.
+Required is a PostgreSQL database (tested version 15).
 
-export PG_CONFIG="host=localhost dbname=mangolana user=galactus password=test sslmode=disable" 
-
-### give rights to user
-
-GRANT ALL PRIVILEGES ON DATABASE mangolana TO galactus;
-GRANT ALL PRIVILEGES ON SCHEMA banking_stage_results TO galactus;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA banking_stage_results TO galactus;
-ALTER DEFAULT PRIVILEGES IN SCHEMA banking_stage_results GRANT ALL PRIVILEGES  ON TABLES TO galactus;

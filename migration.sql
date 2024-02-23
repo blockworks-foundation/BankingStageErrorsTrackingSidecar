@@ -1,3 +1,5 @@
+-- for initial database setup start with init-database.sql
+
 CREATE SCHEMA banking_stage_results_2;
 
 CREATE TABLE banking_stage_results_2.transactions(
@@ -111,18 +113,6 @@ insert into banking_stage_results_2.errors (error_text, error_code) VALUES
         ('WouldExceedMaxAccountCostLimit', 33),
         ('WouldExceedMaxBlockCostLimit', 34),
         ('WouldExceedMaxVoteCostLimit', 35);
-
-CLUSTER banking_stage_results_2.blocks using blocks_pkey;
-VACUUM FULL banking_stage_results_2.blocks;
--- optional
-CLUSTER banking_stage_results_2.transaction_slot using idx_transaction_slot_timestamp;
-VACUUM FULL banking_stage_results_2.transaction_slot;
-
-CLUSTER banking_stage_results_2.accounts_map_transaction using accounts_map_transaction_pkey;
-
-CLUSTER banking_stage_results_2.transactions using transactions_pkey;
-
-CLUSTER banking_stage_results_2.accounts using accounts_pkey;
 
 CREATE TABLE banking_stage_results_2.accounts_map_transaction_latest(
     acc_id BIGINT PRIMARY KEY,
