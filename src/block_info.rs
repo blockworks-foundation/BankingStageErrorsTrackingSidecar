@@ -315,11 +315,14 @@ impl BlockInfo {
                 agg = agg + *cu;
                 if med_cu.is_none() && agg > (cu_sum as f64 * 0.5) as u64 {
                     med_cu = Some(*prio);
-                } else if p75_cu.is_none() && agg > (cu_sum as f64 * 0.75) as u64 {
+                }
+                if p75_cu.is_none() && agg > (cu_sum as f64 * 0.75) as u64 {
                     p75_cu = Some(*prio)
-                } else if p90_cu.is_none() && agg > (cu_sum as f64 * 0.9) as u64 {
+                }
+                if p90_cu.is_none() && agg > (cu_sum as f64 * 0.9) as u64 {
                     p90_cu = Some(*prio);
-                } else if p95_cu.is_none() && agg > (cu_sum as f64 * 0.95) as u64 {
+                }
+                if p95_cu.is_none() && agg > (cu_sum as f64 * 0.95) as u64 {
                     p95_cu = Some(*prio)
                 }
             }
