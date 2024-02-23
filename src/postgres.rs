@@ -515,7 +515,7 @@ impl PostgresSession {
         let started_at = Instant::now();
         let num_rows = self.client.execute(statement.as_str(), &[]).await?;
         debug!(
-            "merged new transactions into accounts_map_transaction_latest for {} accounts in {}ms",
+            "merged new transactions into accounts_map_transaction_latest temp table for {} accounts in {}ms",
             num_rows,
             started_at.elapsed().as_millis()
         );

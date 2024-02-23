@@ -55,8 +55,8 @@ CREATE TABLE banking_stage_results_2.blocks (
                                                 leader_identity varchar(44) NOT NULL,
                                                 supp_infos text
 );
--- page layout: blockhash is important
-ALTER TABLE banking_stage_results_2.blocks SET (toast_tuple_target=128);
+-- page layout: blockhash is frequently used
+ALTER TABLE banking_stage_results_2.blocks SET (toast_tuple_target=200);
 CREATE INDEX idx_blocks_block_hash ON banking_stage_results_2.blocks(block_hash);
 
 
