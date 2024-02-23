@@ -777,12 +777,12 @@ impl PostgresSession {
         let statement = r#"
             INSERT INTO banking_stage_results_2.blocks (
                 slot,
-                block_hash,
-                leader_identity,
                 successful_transactions,
                 processed_transactions,
                 total_cu_used,
                 total_cu_requested,
+                block_hash,
+                leader_identity,
                 supp_infos
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT DO NOTHING
@@ -794,12 +794,12 @@ impl PostgresSession {
                 statement,
                 &[
                     &block_info.slot,
-                    &block_info.block_hash,
-                    &block_info.leader_identity.clone().unwrap_or_default(),
                     &block_info.successful_transactions,
                     &block_info.processed_transactions,
                     &block_info.total_cu_used,
                     &block_info.total_cu_requested,
+                    &block_info.block_hash,
+                    &block_info.leader_identity.clone().unwrap_or_default(),
                     &serde_json::to_string(&block_info.sup_info)?,
                 ],
             )
