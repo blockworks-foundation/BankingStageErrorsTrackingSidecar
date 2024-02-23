@@ -1,4 +1,5 @@
 app = "solana-bankingstage-geyser-sidecar"
+# shared-cpu-2x@4096MB
 primary_region = "fra"
 kill_signal = "SIGINT"
 kill_timeout = "5s"
