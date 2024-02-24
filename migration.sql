@@ -1,12 +1,16 @@
 
 -- for initial database setup start with init-database.sql
+
+-- note "STORAGE" option in column definition requires PostgreSQL 16 or later
+
 CREATE SCHEMA banking_stage_results_2;
 
 CREATE TABLE banking_stage_results_2.transactions(
                                                      transaction_id bigserial PRIMARY KEY,
-                                                     signature varchar(88) STORAGE main NOT NULL,
+                                                     signature varchar(88) NOT NULL,
                                                      UNIQUE(signature)
 );
+ALTER TABLE banking_stage_results_2.transactions ALTER COLUMN signature SET STORAGE MAIN;
 -- page layout: rows are small and must store in main; compression is okey
 -- ALTER TABLE banking_stage_results_2.transactions SET (toast_tuple_target=4080);
 
@@ -18,17 +22,19 @@ CREATE TABLE banking_stage_results_2.transaction_infos (
                                                            cu_requested BIGINT NOT NULL,
                                                            cu_consumed BIGINT NOT NULL,
                                                            prioritization_fees BIGINT NOT NULL,
-                                                           supp_infos text STORAGE extended
+                                                           supp_infos text
 );
 -- page layout: move supp_infos to toast; everything else should stay on main
 ALTER TABLE banking_stage_results_2.transaction_infos SET (toast_tuple_target=128);
+ALTER TABLE banking_stage_results_2.transaction_infos ALTER COLUMN supp_infos SET STORAGE extended;
 
 
 CREATE TABLE banking_stage_results_2.errors (
                                                 error_code int primary key,
-                                                error_text text STORAGE main NOT NULL
+                                                error_text text NOT NULL
 );
 -- page layout: keep everything on main
+ALTER TABLE banking_stage_results_2.errors ALTER COLUMN error_text SET STORAGE main;
 
 
 CREATE TABLE banking_stage_results_2.transaction_slot (
@@ -51,21 +57,23 @@ CREATE TABLE banking_stage_results_2.blocks (
                                                 processed_transactions BIGINT NOT NULL,
                                                 total_cu_used BIGINT NOT NULL,
                                                 total_cu_requested BIGINT NOT NULL,
-                                                block_hash varchar(44) STORAGE main NOT NULL,
+                                                block_hash varchar(44) NOT NULL,
                                                 leader_identity varchar(44) NOT NULL,
                                                 supp_infos text
 );
 -- page layout: blockhash is frequently used
 ALTER TABLE banking_stage_results_2.blocks SET (toast_tuple_target=200);
+ALTER TABLE banking_stage_results_2.blocks ALTER COLUMN block_hash SET STORAGE main;
 CREATE INDEX idx_blocks_block_hash ON banking_stage_results_2.blocks(block_hash);
 
 
 CREATE TABLE banking_stage_results_2.accounts(
                                                  acc_id bigserial PRIMARY KEY,
-                                                 account_key varchar(44) STORAGE main NOT NULL,
+                                                 account_key varchar(44) NOT NULL,
                                                  UNIQUE (account_key)
 );
 -- page layout: rows are small and must store in main; compression is okey
+ALTER TABLE banking_stage_results_2.accounts ALTER COLUMN account_key SET STORAGE main;
 -- ALTER TABLE banking_stage_results_2.transactions SET (toast_tuple_target=4080);
 
 
@@ -87,25 +95,26 @@ CREATE TABLE banking_stage_results_2.accounts_map_blocks (
                                                              is_write_locked BOOL NOT NULL,
                                                              total_cu_consumed BIGINT NOT NULL,
                                                              total_cu_requested BIGINT NOT NULL,
-                                                             prioritization_fees_info text STORAGE extended NOT NULL,
-                                                             supp_infos text STORAGE extended,
+                                                             prioritization_fees_info text NOT NULL,
+                                                             supp_infos text,
                                                              PRIMARY KEY (acc_id, slot, is_write_locked)
 );
 -- page layout: move prioritization_fees_info and supp_infos to toast; everything else should stay on main
 ALTER TABLE banking_stage_results_2.accounts_map_blocks SET (toast_tuple_target=128);
+ALTER TABLE banking_stage_results_2.accounts_map_blocks ALTER COLUMN prioritization_fees_info SET STORAGE extended;
+ALTER TABLE banking_stage_results_2.accounts_map_blocks ALTER COLUMN supp_infos SET STORAGE extended;
 CREATE INDEX idx_accounts_map_blocks_slot ON banking_stage_results_2.accounts_map_blocks(slot);
 
 
 CREATE TABLE banking_stage_results_2.accounts_map_transaction_latest(
                                                                         acc_id BIGINT PRIMARY KEY,
     -- max 120 int8 ids (see LIMIT_LATEST_TXS_PER_ACCOUNT)
-                                                                        tx_ids BIGINT[] STORAGE main NOT NULL
+                                                                        tx_ids BIGINT[] NOT NULL
 );
 -- page layout: tx_ids is the only relevant data must remain in main; tx_ids size is intentionally limited to fit a single page; compression is okey
 -- do not limit tuple size, it is not relevant
 ALTER TABLE banking_stage_results_2.accounts_map_transaction_latest SET (toast_tuple_target=4080);
-
-
+ALTER TABLE banking_stage_results_2.accounts_map_transaction_latest ALTER COLUMN tx_ids SET STORAGE main;
 
 
 INSERT INTO banking_stage_results_2.errors (error_text, error_code) VALUES
