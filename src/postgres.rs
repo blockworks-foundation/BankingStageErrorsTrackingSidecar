@@ -200,7 +200,7 @@ impl PostgresSession {
                 format!(
                     r#"
         CREATE TEMP TABLE {}(
-            signature char(88)
+            signature varchar(88) NOT NULL
         );
         "#,
                     temp_table
@@ -237,7 +237,7 @@ impl PostgresSession {
         INSERT INTO banking_stage_results_2.transactions(signature)
         SELECT signature FROM {}
         ORDER BY signature
-        ON CONFLICT DO NOTHING
+        ON CONFLICT(signature) DO NOTHING
         "#,
             temp_table
         );
@@ -264,7 +264,7 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            key TEXT
+            account_key VARCHAR(44) NOT NULL
         );",
                     temp_table
                 )
@@ -276,7 +276,7 @@ impl PostgresSession {
         let statement = format!(
             r#"
             COPY {}(
-                key
+                account_key
             ) FROM STDIN BINARY
         "#,
             temp_table
@@ -300,7 +300,7 @@ impl PostgresSession {
         INSERT INTO banking_stage_results_2.accounts(account_key)
         SELECT key FROM {}
         ORDER BY key
-        ON CONFLICT DO NOTHING
+        ON CONFLICT(account_key) DO NOTHING
         "#,
             temp_table
         );
@@ -326,11 +326,11 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            sig char(88),
-            slot BIGINT,
-            error_code INT,
-            count INT,
-            utc_timestamp TIMESTAMP
+            sig varchar(88) NOT NULL,
+            slot BIGINT NOT NULL,
+            error_code INT NOT NULL,
+            count INT NOT NULL,
+            utc_timestamp TIMESTAMP NOT NULL
         );",
                     temp_table
                 )
@@ -420,11 +420,11 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            account_key char(44),
-            signature char(88),
-            is_writable BOOL,
-            is_signer BOOL,
-            is_atl BOOL
+            account_key varchar(44) NOT NULL,
+            signature varchar(88) NOT NULL,
+            is_writable BOOL NOT NULL,
+            is_signer BOOL NOT NULL,
+            is_atl BOOL NOT NULL
         );",
                     temp_table
                 )
@@ -522,7 +522,7 @@ impl PostgresSession {
         let started_at = Instant::now();
         let num_rows = self.client.execute(statement.as_str(), &[]).await?;
         debug!(
-            "merged new transactions into accounts_map_transaction_latest for {} accounts in {}ms",
+            "merged new transactions into accounts_map_transaction_latest temp table for {} accounts in {}ms",
             num_rows,
             started_at.elapsed().as_millis()
         );
@@ -559,12 +559,12 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            signature char(88),
-            processed_slot BIGINT,
-            is_successful BOOL,
-            cu_requested BIGINT,
-            cu_consumed BIGINT,
-            prioritization_fees BIGINT,
+            signature varchar(88) NOT NULL,
+            processed_slot BIGINT NOT NULL,
+            is_successful BOOL  NOT NULL,
+            cu_requested BIGINT NOT NULL,
+            cu_consumed BIGINT NOT NULL,
+            prioritization_fees BIGINT NOT NULL,
             supp_infos text
         )",
                     temp_table
@@ -657,11 +657,11 @@ impl PostgresSession {
             .execute(
                 format!(
                     "CREATE TEMP TABLE {}(
-            account_key char(44),
-            slot BIGINT,
-            is_write_locked BOOL,
-            total_cu_requested BIGINT,
-            total_cu_consumed BIGINT,
+            account_key varchar(44) NOT NULL,
+            slot BIGINT NOT NULL,
+            is_write_locked BOOL NOT NULL,
+            total_cu_requested BIGINT NOT NULL,
+            total_cu_consumed BIGINT NOT NULL,
             prioritization_fees_info text
         )",
                     temp_table
@@ -787,12 +787,12 @@ impl PostgresSession {
         let statement = r#"
             INSERT INTO banking_stage_results_2.blocks (
                 slot,
-                block_hash,
-                leader_identity,
                 successful_transactions,
                 processed_transactions,
                 total_cu_used,
                 total_cu_requested,
+                block_hash,
+                leader_identity,
                 supp_infos
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT DO NOTHING
@@ -804,12 +804,12 @@ impl PostgresSession {
                 statement,
                 &[
                     &block_info.slot,
-                    &block_info.block_hash,
-                    &block_info.leader_identity.clone().unwrap_or_default(),
                     &block_info.successful_transactions,
                     &block_info.processed_transactions,
                     &block_info.total_cu_used,
                     &block_info.total_cu_requested,
+                    &block_info.block_hash,
+                    &block_info.leader_identity.clone().unwrap_or_default(),
                     &serde_json::to_string(&block_info.sup_info)?,
                 ],
             )
