@@ -298,8 +298,8 @@ impl PostgresSession {
         let statement = format!(
             r#"
         INSERT INTO banking_stage_results_2.accounts(account_key)
-        SELECT key FROM {}
-        ORDER BY key
+        SELECT account_key FROM {}
+        ORDER BY account_key
         ON CONFLICT(account_key) DO NOTHING
         "#,
             temp_table
