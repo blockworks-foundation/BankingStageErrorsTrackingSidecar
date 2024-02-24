@@ -106,7 +106,7 @@ ALTER TABLE banking_stage_results_2.accounts_map_blocks ALTER COLUMN supp_infos 
 CREATE INDEX idx_accounts_map_blocks_slot ON banking_stage_results_2.accounts_map_blocks(slot);
 
 
-CREATE TABLE banking_stage_results_2.accounts_map_transaction_latest(
+CREATE UNLOGGED TABLE banking_stage_results_2.accounts_map_transaction_latest(
                                                                         acc_id BIGINT PRIMARY KEY,
     -- max 120 int8 ids (see LIMIT_LATEST_TXS_PER_ACCOUNT)
                                                                         tx_ids BIGINT[] NOT NULL
