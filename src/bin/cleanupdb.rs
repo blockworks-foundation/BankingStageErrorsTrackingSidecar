@@ -13,6 +13,9 @@ pub struct Args {
 
     #[arg(short, long, default_value_t = false)]
     pub dry_run: bool,
+
+    #[arg(short, long, default_value_t = false)]
+    pub count_rows: bool,
 }
 
 #[tokio::main()]
@@ -22,9 +25,10 @@ async fn main() {
     let Args {
         num_slots_to_keep,
         dry_run,
+        count_rows,
     } = Args::parse();
 
     let session = PostgresSession::new(0).await.unwrap();
 
-    session.cleanup_old_data(num_slots_to_keep, dry_run).await;
+    session.cleanup_old_data(num_slots_to_keep, dry_run, count_rows).await;
 }
