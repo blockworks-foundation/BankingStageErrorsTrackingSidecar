@@ -65,7 +65,7 @@ lazy_static::lazy_static! {
 
     static ref TIME_TO_STORE_TX_ACCOUNT_OLD: IntGauge =
        register_int_gauge!(opts!("banking_stage_sidecar_tx_account_old", "Account in tx account old")).unwrap();
-    
+
     static ref TIME_TO_STORE_TX_ACCOUNT_NEW: IntGauge =
        register_int_gauge!(opts!("banking_stage_sidecar_tx_account_new", "Account in tx account new")).unwrap();
 }
@@ -413,7 +413,6 @@ impl PostgresSession {
         &self,
         accounts_for_transaction: Vec<AccountsForTransaction>,
     ) -> anyhow::Result<()> {
-
         let instant = Instant::now();
         let temp_table = self.get_new_temp_table();
         self.client
@@ -959,7 +958,9 @@ impl PostgresSession {
     // "accounts_map_transaction" -> delete rows with transaction_id before X
     // "transaction_infos" -> delete rows processed_slot before X
     // "transaction_slot" -> delete transaction with slot before X
-    pub async fn cleanup_old_data(&self, slots_to_keep: i64, dry_run: bool) {
+
+    // count_rows=true might be very expensive
+    pub async fn cleanup_old_data(&self, slots_to_keep: i64, dry_run: bool, count_rows: bool) {
         // keep 1mio slots (apprx 4 days)
         info!(
             "{}Running cleanup job with slots_to_keep={}",
@@ -969,7 +970,7 @@ impl PostgresSession {
 
         self.configure_work_mem().await;
 
-        {
+        if count_rows {
             info!("Rows before cleanup:");
             self.log_rowcount(Level::Info, "blocks").await;
             self.log_rowcount(Level::Info, "accounts").await;
@@ -979,6 +980,8 @@ impl PostgresSession {
                 .await;
             self.log_rowcount(Level::Info, "transaction_infos").await;
             self.log_rowcount(Level::Info, "transaction_slot").await;
+        } else {
+            info!("Skipping row count before cleanup");
         }
 
         // max slot from blocks table
@@ -1227,7 +1230,7 @@ impl PostgresSession {
             );
         }
 
-        {
+        if count_rows {
             info!("Rows after cleanup:");
             self.log_rowcount(Level::Info, "blocks").await;
             self.log_rowcount(Level::Info, "accounts").await;
@@ -1237,6 +1240,8 @@ impl PostgresSession {
                 .await;
             self.log_rowcount(Level::Info, "transaction_infos").await;
             self.log_rowcount(Level::Info, "transaction_slot").await;
+        } else {
+            info!("Skipping row count after cleanup");
         }
 
         info!("Cleanup job completed.");
