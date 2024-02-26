@@ -18,6 +18,8 @@ jobs:
 
       # The toolchain action should definitely be run before the cache action
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
 
       - name: Rust Check
         run: |
