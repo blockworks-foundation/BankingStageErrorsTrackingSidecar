@@ -184,14 +184,6 @@ impl PostgresSession {
         info!("Configured work_mem={}", work_mem);
     }
 
-    pub async fn disable_synchronous_commit(&self) {
-        self.client
-            .execute("SET synchronous_commit=off", &[])
-            .await
-            .unwrap();
-        info!("Turn synchronous_commit off!");
-    }
-
     pub async fn drop_temp_table(&self, table: String) -> anyhow::Result<()> {
         self.client
             .execute(format!("drop table if exists {};", table).as_str(), &[])
@@ -1273,12 +1265,10 @@ pub struct Postgres {
 }
 
 impl Postgres {
-    /// Connection optimized for write operations
-    pub async fn new_for_write(nb: usize) -> Self {
+    pub async fn new_with_workmem(nb: usize) -> Self {
         let session = PostgresSession::new(nb).await.unwrap();
         let session = Arc::new(session);
         session.configure_work_mem().await;
-        session.disable_synchronous_commit().await;
         Self { session }
     }
 

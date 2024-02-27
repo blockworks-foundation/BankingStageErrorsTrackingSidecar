@@ -347,7 +347,7 @@ async fn main() -> anyhow::Result<()> {
     // maintain a global serial version for deterministic transaction ordering
     let error_plugin_write_version = Arc::new(AtomicU64::new(0));
 
-    let postgres1 = postgres::Postgres::new_for_write(0).await;
+    let postgres1 = postgres::Postgres::new_with_workmem(0).await;
     let slot = Arc::new(AtomicU64::new(0));
     let no_block_subscription = grpc_block_addr.is_none();
     let alts = args.alts;
@@ -365,7 +365,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut block_senders = vec![];
     for i in 1..=4 {
-        let s = postgres::Postgres::new_for_write(i)
+        let s = postgres::Postgres::new_with_workmem(i)
             .await
             .spawn_block_saver();
         block_senders.push(s);
