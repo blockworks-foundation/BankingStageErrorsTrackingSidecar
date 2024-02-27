@@ -25,3 +25,7 @@ GRANT CONNECT ON DATABASE the_banking_stage_db TO bankingstage_dashboard;
 ALTER USER bankingstage_sidecar CONNECTION LIMIT 10;
 GRANT USAGE ON SCHEMA banking_stage_results_2 TO bankingstage_dashboard;
 GRANT SELECT ON ALL TABLES in SCHEMA banking_stage_results_2 TO bankingstage_dashboard;
+
+-- setup tablespaces
+-- CREATE TABLESPACE mango_tempspace LOCATION '/var/lib/postgresql_mango_tempspace';
+-- GRANT CREATE ON TABLESPACE mango_tempspace TO PUBLIC;
