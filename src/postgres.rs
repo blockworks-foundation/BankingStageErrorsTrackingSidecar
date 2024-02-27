@@ -187,17 +187,21 @@ impl PostgresSession {
     pub async fn configure_temp_tablespaces(&self) {
         // TODO filter with like and set all spaces
         // CREATE TABLESPACE mango_tempspace LOCATION '/var/lib/postgresql_mango_tempspace';
-        const TEMP_TABLESPACE: &str = "mango_tempspace";
-        let tablespace_exists =
-            self.client
-            .query_opt("SELECT spcname FROM pg_tablespace WHERE spcname=$1", &[&TEMP_TABLESPACE])
+        const TEMP_TABLESPACE_PATTERN: &str = "mango_tempspace%";
+
+        let spaces = self.client
+            .query("SELECT spcname FROM pg_tablespace WHERE spcname like $1", &[&TEMP_TABLESPACE_PATTERN])
             .await
-            .unwrap().is_some();
-        if tablespace_exists {
-            info!("Tablespace {} exists - use it for temp tables", TEMP_TABLESPACE);
+            .unwrap();
+
+        // space1,space2,space3
+        let temp_spaces = spaces.iter()
+            .map(|space| space.get::<&str, &str>("spcname"))
+            .join(",");
+        if !spaces.is_empty() {
+            info!("Use tablespaces {} for temp tables", temp_spaces);
             self.client
-                // .execute("SET temp_tablespaces=$1", &[&TEMP_TABLESPACE])
-                .execute("SET temp_tablespaces=mango_tempspace", &[])
+                .execute(format!("SET temp_tablespaces={}", temp_spaces).as_str(), &[])
                 .await
                 .unwrap();
         }
