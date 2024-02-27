@@ -196,10 +196,19 @@ impl PostgresSession {
         if tablespace_exists {
             info!("Tablespace {} exists - use it for temp tables", TEMP_TABLESPACE);
             self.client
-                .execute("SET temp_tablespaces=$1", &[&TEMP_TABLESPACE])
+                // .execute("SET temp_tablespaces=$1", &[&TEMP_TABLESPACE])
+                .execute("SET temp_tablespaces=mango_tempspace", &[])
                 .await
                 .unwrap();
         }
+
+        let temp_tablespaces: String = self
+            .client
+            .query_one("show temp_tablespaces", &[])
+            .await
+            .unwrap()
+            .get("temp_tablespaces");
+        info!("Configured temp_tablespaces={}", temp_tablespaces);
     }
 
     pub async fn drop_temp_table(&self, table: String) -> anyhow::Result<()> {
