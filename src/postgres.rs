@@ -184,6 +184,27 @@ impl PostgresSession {
         info!("Configured work_mem={}", work_mem);
     }
 
+    pub async fn configure_temp_tablespaces(&self) {
+        // TODO filter with like and set all spaces
+        // CREATE TABLESPACE mango_tempspace LOCATION '/var/lib/postgresql_mango_tempspace';
+        const TEMP_TABLESPACE: &str = "mango_tempspace";
+        let tablespace_exists =
+            self.client
+            .query_opt("SELECT spcname FROM pg_tablespace WHERE spcname=$1", &[TEMP_TABLESPACE])
+            .await
+            .unwrap().is_some();
+        if tablespace_exists {
+            info!("Tablespace {} already exists - use it for temp tables", TEMP_TABLESPACE);
+            self.client
+                .execute("SET temp_tablespaces=$1", &[TEMP_TABLESPACE])
+                .await
+                .unwrap();
+        }
+    }
+
+
+    SELECT spcname FROM pg_tablespace;
+
     pub async fn drop_temp_table(&self, table: String) -> anyhow::Result<()> {
         self.client
             .execute(format!("drop table if exists {};", table).as_str(), &[])
@@ -1269,6 +1290,7 @@ impl Postgres {
         let session = PostgresSession::new(nb).await.unwrap();
         let session = Arc::new(session);
         session.configure_work_mem().await;
+        session.configure_temp_tablespaces().await;
         Self { session }
     }
 
