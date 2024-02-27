@@ -190,20 +190,17 @@ impl PostgresSession {
         const TEMP_TABLESPACE: &str = "mango_tempspace";
         let tablespace_exists =
             self.client
-            .query_opt("SELECT spcname FROM pg_tablespace WHERE spcname=$1", &[TEMP_TABLESPACE])
+            .query_opt("SELECT spcname FROM pg_tablespace WHERE spcname=$1", &[&TEMP_TABLESPACE])
             .await
             .unwrap().is_some();
         if tablespace_exists {
-            info!("Tablespace {} already exists - use it for temp tables", TEMP_TABLESPACE);
+            info!("Tablespace {} exists - use it for temp tables", TEMP_TABLESPACE);
             self.client
-                .execute("SET temp_tablespaces=$1", &[TEMP_TABLESPACE])
+                .execute("SET temp_tablespaces=$1", &[&TEMP_TABLESPACE])
                 .await
                 .unwrap();
         }
     }
-
-
-    SELECT spcname FROM pg_tablespace;
 
     pub async fn drop_temp_table(&self, table: String) -> anyhow::Result<()> {
         self.client
