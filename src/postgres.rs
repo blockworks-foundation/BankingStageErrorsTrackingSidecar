@@ -25,6 +25,7 @@ use tokio_postgres::{
     types::{ToSql, Type},
     Client, CopyInSink, NoTls, Socket,
 };
+use tokio_postgres::types::BorrowToSql;
 
 use crate::{
     block_info::{BlockInfo, BlockTransactionInfo},
@@ -814,8 +815,25 @@ impl PostgresSession {
         Ok(())
     }
 
-    pub async fn save_block_info(&self, block_info: &BlockInfo) -> anyhow::Result<()> {
-        let statement = r#"
+    pub async fn save_block_info(&self, block_batch: Vec<BlockInfo>) -> anyhow::Result<()> {
+
+        // ($1,$2,$3),($4,$5,$6)
+        let values_sql = values_vecvec(
+            8, block_batch.len(),
+            // &[
+            //     &block_info.slot,
+            //     &block_info.successful_transactions,
+            //     &block_info.processed_transactions,
+            //     &block_info.total_cu_used,
+            //     &block_info.total_cu_requested,
+            //     &block_info.block_hash,
+            //     &block_info.leader_identity.clone().unwrap_or_default(),
+            //     &serde_json::to_string(&block_info.sup_info)?,
+            // ],
+            &[]
+        );
+
+        let statement = format!(r#"
             INSERT INTO banking_stage_results_2.blocks (
                 slot,
                 successful_transactions,
@@ -825,24 +843,31 @@ impl PostgresSession {
                 block_hash,
                 leader_identity,
                 supp_infos
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ) VALUES {values_placeholders}
             ON CONFLICT DO NOTHING
-            "#;
+            "#, values_placeholders = values_sql);
+
+
+        let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(8 * block_batch.len());
+        // Vec<&(dyn ToSql + Sync)>
+
+        for block_info in &block_batch {
+            args.push(&block_info.slot);
+            args.push(&block_info.successful_transactions);
+            args.push(&block_info.processed_transactions);
+            args.push(&block_info.total_cu_used);
+            args.push(&block_info.total_cu_requested);
+            args.push(&block_info.block_hash);
+            args.push(&block_info.leader_identity);
+            args.push(&block_info.sup_json);
+        }
+
         let started_at = Instant::now();
         let num_rows = self
             .client
             .execute(
-                statement,
-                &[
-                    &block_info.slot,
-                    &block_info.successful_transactions,
-                    &block_info.processed_transactions,
-                    &block_info.total_cu_used,
-                    &block_info.total_cu_requested,
-                    &block_info.block_hash,
-                    &block_info.leader_identity.clone().unwrap_or_default(),
-                    &serde_json::to_string(&block_info.sup_info)?,
-                ],
+                &statement,
+                &args,
             )
             .await?;
         debug!(
@@ -976,9 +1001,7 @@ impl PostgresSession {
         TIME_TO_SAVE_BLOCK_ACCOUNTS.set(ins.elapsed().as_millis() as i64);
 
         let inst_block_info = Instant::now();
-        for block_info in &block_batch {
-            self.save_block_info(&block_info).await?;
-        }
+        self.save_block_info(block_batch).await?;
         BLOCK_INFO_SAVE_TIME.set(inst_block_info.elapsed().as_millis() as i64);
 
         TIME_TO_SAVE_BLOCK.set(instant.elapsed().as_millis() as i64);
@@ -1441,4 +1464,38 @@ pub async fn send_block_info_to_buffer(
     }
 
     Ok(())
+}
+
+
+pub fn values_vecvec(args: usize, rows: usize, types: &[&str]) -> String {
+    let mut query = String::new();
+
+    multiline_query(&mut query, args, rows, types);
+
+    query
+}
+
+pub fn multiline_query(query: &mut String, args: usize, rows: usize, types: &[&str]) {
+    let mut arg_index = 1usize;
+    for row in 0..rows {
+        query.push('(');
+
+        for i in 0..args {
+            if row == 0 && !types.is_empty() {
+                query.push_str(&format!("(${arg_index})::{}", types[i]));
+            } else {
+                query.push_str(&format!("${arg_index}"));
+            }
+            arg_index += 1;
+            if i != (args - 1) {
+                query.push(',');
+            }
+        }
+
+        query.push(')');
+
+        if row != (rows - 1) {
+            query.push(',');
+        }
+    }
 }

@@ -115,6 +115,8 @@ pub struct BlockInfo {
     pub total_cu_requested: i64,
     pub heavily_locked_accounts: Vec<AccountUsage>,
     pub sup_info: Option<PrioritizationFeesInfo>,
+    // store supinfo redundantly as json string to make querying easier
+    pub sup_json: Option<String>,
     pub transactions: Vec<BlockTransactionInfo>,
 }
 
@@ -484,6 +486,7 @@ impl BlockInfo {
             Self::calculate_account_usage(&writelocked_accounts, &readlocked_accounts);
 
         let sup_info = Self::calculate_supp_info(&mut prio_fees_in_block);
+        let sup_json = sup_info.as_ref().map(|x| serde_json::to_string(&x).expect("json error"));
 
         BlockInfo {
             block_hash,
@@ -495,6 +498,7 @@ impl BlockInfo {
             total_cu_requested: total_cu_requested as i64,
             heavily_locked_accounts,
             sup_info,
+            sup_json,
             transactions: block_transactions,
         }
     }

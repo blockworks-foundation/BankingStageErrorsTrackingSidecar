@@ -302,7 +302,6 @@ async fn start_tracking_blocks(
                     let atl_store = atl_store.clone();
 
                     tokio::spawn(async move {
-                        info!("spawn task");
                         // to support address lookup tables delay processing a littlebit
                         tokio::time::sleep(Duration::from_secs(2)).await;
                         let block_info = BlockInfo::new(atl_store, &block).await;
