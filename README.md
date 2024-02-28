@@ -21,3 +21,4 @@ The database schema is defined in the [migration.sql](migration.sql) file.
 For new database installations start with the [init-database.sql](init-database.sql) file.
 Required is a PostgreSQL database (tested version 15).
 
+(optional) Create tablespaces following the naming convention (see postgres.rs and [init-database.sql](init-database.sql)).

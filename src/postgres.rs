@@ -194,7 +194,7 @@ impl PostgresSession {
             .await
             .unwrap();
 
-        // space1,space2,space3
+        // space1, space2, space3
         let temp_spaces = spaces.iter()
             .map(|space| space.get::<&str, &str>("spcname"))
             .join(",");
@@ -212,7 +212,7 @@ impl PostgresSession {
             .await
             .unwrap()
             .get("temp_tablespaces");
-        info!("Configured temp_tablespaces={}", temp_tablespaces);
+        info!("Parameter temp_tablespaces={}", temp_tablespaces);
     }
 
     pub async fn drop_temp_table(&self, table: String) -> anyhow::Result<()> {
