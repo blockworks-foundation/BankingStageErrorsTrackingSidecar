@@ -11,6 +11,7 @@ while true; do
   # startup delay
   sleep 300;
   # should retain about 1 week of data
+  # no "--count-rows"
   RUST_LOG=info /usr/local/bin/cleanupdb --num-slots-to-keep $SLOTS_TO_KEEP;
   # every 5 hours
   sleep 18000;
