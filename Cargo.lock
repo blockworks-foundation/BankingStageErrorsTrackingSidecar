@@ -4886,7 +4886,7 @@ dependencies = [
 [[package]]
 name = "yellowstone-grpc-client"
 version = "1.11.1+solana.1.16.17"
-source = "git+https://github.com/blockworks-foundation/yellowstone-grpc.git?branch=tag-v1.16-mango#620c49a01a6de30790b2afcc71c6c709b3061880"
+source = "git+https://github.com/blockworks-foundation/yellowstone-grpc.git?branch=tag-v1.16-mango#ada20b8e3946d87bcb7ebfe97f6a2153366094e7"
 dependencies = [
  "bytes",
  "futures",
@@ -4900,8 +4900,7 @@ dependencies = [
 [[package]]
 name = "yellowstone-grpc-client"
 version = "1.12.0+solana.1.16.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e58204f372a7e82d15d72bdf99334029c4e9cdc15bd2e9a5c33b598d9f1eb8b6"
+source = "git+https://github.com/blockworks-foundation/yellowstone-grpc.git?tag=v1.11.0+solana.1.16.17-with-buffers2#751d756cb00c8a8c56a75a23e584f19bee5695cf"
 dependencies = [
  "bytes",
  "futures",
@@ -4915,7 +4914,7 @@ dependencies = [
 [[package]]
 name = "yellowstone-grpc-proto"
 version = "1.10.0+solana.1.16.17"
-source = "git+https://github.com/blockworks-foundation/yellowstone-grpc.git?branch=tag-v1.16-mango#620c49a01a6de30790b2afcc71c6c709b3061880"
+source = "git+https://github.com/blockworks-foundation/yellowstone-grpc.git?branch=tag-v1.16-mango#ada20b8e3946d87bcb7ebfe97f6a2153366094e7"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4931,8 +4930,7 @@ dependencies = [
 [[package]]
 name = "yellowstone-grpc-proto"
 version = "1.11.0+solana.1.16.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00d751c6ef3093ec90ab1e16c6a504b5bea99aca6c688c429fed4cc56782f57e"
+source = "git+https://github.com/blockworks-foundation/yellowstone-grpc.git?tag=v1.11.0+solana.1.16.17-with-buffers2#751d756cb00c8a8c56a75a23e584f19bee5695cf"
 dependencies = [
  "anyhow",
  "bincode",

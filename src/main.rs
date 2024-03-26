@@ -26,6 +26,7 @@ use futures::StreamExt;
 use log::{debug, error, info};
 use prometheus::{opts, register_int_counter, register_int_gauge, IntCounter, IntGauge};
 use tokio::sync::mpsc::Sender;
+use yellowstone_grpc_client_original::GeyserGrpcClientBufferConfig;
 use transaction_info::TransactionInfo;
 
 mod alt_store;
@@ -181,10 +182,19 @@ async fn start_tracking_blocks(
         })
     };
 
-    let mut client = yellowstone_grpc_client_original::GeyserGrpcClient::connect(
+    let buffer_config_large = GeyserGrpcClientBufferConfig {
+        buffer_size: Some(65536),  // 64kb (default: 1k)
+        conn_window: Some(5242880), // 5mb (=default)
+        stream_window: Some(4194304), // 4mb (default: 2m)
+    };
+    // see https://github.com/blockworks-foundation/geyser-grpc-connector/issues/10
+    let mut client = yellowstone_grpc_client_original::GeyserGrpcClient::connect_with_timeout_with_buffers(
         grpc_block_addr,
         grpc_x_token,
         None,
+        None,
+        None,
+        buffer_config_large
     )
     .unwrap();
 
