@@ -184,6 +184,14 @@ impl PostgresSession {
         info!("Configured work_mem={}", work_mem);
     }
 
+    pub async fn disable_postgres_workers(&self) {
+        self.client
+            .execute("SET max_parallel_workers_per_gather = 0", &[])
+            .await
+            .unwrap();
+        info!("Disable parallel postgres workers");
+    }
+
     pub async fn drop_temp_table(&self, table: String) -> anyhow::Result<()> {
         self.client
             .execute(format!("drop table if exists {};", table).as_str(), &[])
@@ -969,6 +977,7 @@ impl PostgresSession {
         );
 
         self.configure_work_mem().await;
+        self.disable_postgres_workers().await;
 
         if count_rows {
             info!("Rows before cleanup:");
