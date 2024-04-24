@@ -206,6 +206,7 @@ ALTER TABLE banking_stage_results_2.accounts_map_transaction
         autovacuum_analyze_threshold=10000
         );
 
+-- not written ATM
 ALTER TABLE banking_stage_results_2.accounts_map_transaction_latest
     SET (
         autovacuum_vacuum_scale_factor=0,

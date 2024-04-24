@@ -498,60 +498,65 @@ impl PostgresSession {
         );
         TIME_TO_STORE_TX_ACCOUNT_OLD.set(instant.elapsed().as_millis() as i64);
 
-        let instant = Instant::now();
-        // merge data from temp table into accounts_map_transaction_latest
-        // note: query uses the array_dedup_append postgres function to deduplicate and limit the array size
-        // example: array_dedup_append('{8,3,2,1}', '{5,3}', 4) -> {2,1,5,3}
-        let temp_table_latest_agged = self.get_new_temp_table();
-        let statement = format!(
-            r#"
-            CREATE TEMP TABLE {temp_table_name} AS
-            WITH amt_new AS (
+        // DISABLED FOR NOW to see if the rest of the system works better without it
+        warn!("DISABLED writing of table accounts_map_transaction_latest");
+        if false {
+            let instant = Instant::now();
+            // merge data from temp table into accounts_map_transaction_latest
+            // note: query uses the array_dedup_append postgres function to deduplicate and limit the array size
+            // example: array_dedup_append('{8,3,2,1}', '{5,3}', 4) -> {2,1,5,3}
+            let temp_table_latest_agged = self.get_new_temp_table();
+            let statement = format!(
+                r#"
+                CREATE TEMP TABLE {temp_table_name} AS
+                WITH amt_new AS (
+                    SELECT
+                        acc_id, array_agg(transactions.transaction_id) AS tx_agged
+                    FROM {temp_table_newdata} AS newdata
+                    inner join banking_stage_results_2.accounts on accounts.account_key=newdata.account_key
+                    inner join banking_stage_results_2.transactions on transactions.signature=newdata.signature
+                    GROUP BY acc_id
+                )
                 SELECT
-                    acc_id, array_agg(transactions.transaction_id) AS tx_agged
-                FROM {temp_table_newdata} AS newdata
-                inner join banking_stage_results_2.accounts on accounts.account_key=newdata.account_key
-                inner join banking_stage_results_2.transactions on transactions.signature=newdata.signature
-                GROUP BY acc_id
-            )
-            SELECT
-                acc_id,
-                array_dedup_append(
-                    (SELECT tx_ids FROM banking_stage_results_2.accounts_map_transaction_latest WHERE acc_id=amt_new.acc_id),
-                    amt_new.tx_agged,
-                    {limit}) AS tx_ids_agg
-                FROM amt_new
-        "#,
-            temp_table_newdata = temp_table,
-            temp_table_name = temp_table_latest_agged,
-            limit = LIMIT_LATEST_TXS_PER_ACCOUNT
-        );
-        let started_at = Instant::now();
-        let num_rows = self.client.execute(statement.as_str(), &[]).await?;
-        debug!(
-            "merged new transactions into accounts_map_transaction_latest temp table for {} accounts in {}ms",
-            num_rows,
-            started_at.elapsed().as_millis()
-        );
+                    acc_id,
+                    array_dedup_append(
+                        (SELECT tx_ids FROM banking_stage_results_2.accounts_map_transaction_latest WHERE acc_id=amt_new.acc_id),
+                        amt_new.tx_agged,
+                        {limit}) AS tx_ids_agg
+                    FROM amt_new
+            "#,
+                temp_table_newdata = temp_table,
+                temp_table_name = temp_table_latest_agged,
+                limit = LIMIT_LATEST_TXS_PER_ACCOUNT
+            );
+            let started_at = Instant::now();
+            let num_rows = self.client.execute(statement.as_str(), &[]).await?;
+            debug!(
+                "merged new transactions into accounts_map_transaction_latest temp table for {} accounts in {}ms",
+                num_rows,
+                started_at.elapsed().as_millis()
+            );
 
-        let statement = format!(
-            r#"
-            INSERT INTO banking_stage_results_2.accounts_map_transaction_latest(acc_id, tx_ids)
-            SELECT acc_id, tx_ids_agg FROM {temp_table_name}
-            ORDER BY acc_id
-            ON CONFLICT (acc_id) DO UPDATE SET tx_ids = EXCLUDED.tx_ids
-        "#,
-            temp_table_name = temp_table_latest_agged
-        );
-        let started_at = Instant::now();
-        let num_rows = self.client.execute(statement.as_str(), &[]).await?;
-        debug!(
-            "upserted {} merged transaction arrays into accounts_map_transaction_latest in {}ms",
-            num_rows,
-            started_at.elapsed().as_millis()
-        );
-        TIME_TO_STORE_TX_ACCOUNT_NEW.set(instant.elapsed().as_millis() as i64);
-        self.drop_temp_table(temp_table_latest_agged).await?;
+            let statement = format!(
+                r#"
+                INSERT INTO banking_stage_results_2.accounts_map_transaction_latest(acc_id, tx_ids)
+                SELECT acc_id, tx_ids_agg FROM {temp_table_name}
+                ORDER BY acc_id
+                ON CONFLICT (acc_id) DO UPDATE SET tx_ids = EXCLUDED.tx_ids
+            "#,
+                temp_table_name = temp_table_latest_agged
+            );
+            let started_at = Instant::now();
+            let num_rows = self.client.execute(statement.as_str(), &[]).await?;
+            debug!(
+                "upserted {} merged transaction arrays into accounts_map_transaction_latest in {}ms",
+                num_rows,
+                started_at.elapsed().as_millis()
+            );
+            TIME_TO_STORE_TX_ACCOUNT_NEW.set(instant.elapsed().as_millis() as i64);
+            self.drop_temp_table(temp_table_latest_agged).await?;
+        }
+
         self.drop_temp_table(temp_table).await?;
         Ok(())
     }
