@@ -55,6 +55,8 @@ lazy_static::lazy_static! {
         register_int_gauge!(opts!("bankingstage_blocks_in_rpc_queue", "Banking stage blocks in rpc queue")).unwrap();
 }
 
+const NUM_BLOCK_SENDERS: usize = 4;
+
 pub async fn start_tracking_banking_stage_errors(
     grpc_address: String,
     map_of_infos: Arc<DashMap<(String, u64), TransactionInfo>>,
@@ -381,7 +383,8 @@ async fn main() -> anyhow::Result<()> {
         .collect_vec();
 
     let mut block_senders = vec![];
-    for i in 1..=4 {
+    info!("Starting {} block senders");
+    for i in 1..=NUM_BLOCK_SENDERS {
         let s = postgres::Postgres::new_with_workmem(i)
             .await
             .spawn_block_saver();
