@@ -26,6 +26,8 @@ use futures::StreamExt;
 use log::{debug, error, info};
 use prometheus::{opts, register_int_counter, register_int_gauge, IntCounter, IntGauge};
 use tokio::sync::mpsc::Sender;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt::format::FmtSpan;
 use yellowstone_grpc_client_original::GeyserGrpcClientBufferConfig;
 use transaction_info::TransactionInfo;
 
@@ -123,7 +125,7 @@ pub async fn start_tracking_banking_stage_errors(
                     BANKING_STAGE_ERROR_EVENT_COUNT.inc();
                     instance = Instant::now();
 
-                    let sig = transaction.signature.to_string();
+                    let sig = &transaction.signature;
                     match map_of_infos.get_mut(&(sig.clone(), transaction.slot)) {
                         Some(mut x) => {
                             let tx_info = x.value_mut();
@@ -133,7 +135,7 @@ pub async fn start_tracking_banking_stage_errors(
                             // map_of_infos might get populated by parallel writers if multiple geyser sources are configured
                             let write_version = error_plugin_write_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             let tx_info = TransactionInfo::new(&transaction, write_version);
-                            map_of_infos.insert((sig, transaction.slot), tx_info);
+                            map_of_infos.insert((sig.clone(), transaction.slot), tx_info);
                         }
                     }
                 },
@@ -158,7 +160,7 @@ async fn start_tracking_blocks(
     grpc_x_token: Option<String>,
     block_sender_postgres: Vec<Sender<BlockInfo>>,
     slot: Arc<AtomicU64>,
-    alts_list: Vec<Pubkey>,
+    alts_list: Vec<&Pubkey>,
 ) {
     let block_counter = Arc::new(AtomicU64::new(0));
     let restart_block_subscription = Arc::new(AtomicBool::new(false));
@@ -233,7 +235,7 @@ async fn start_tracking_blocks(
     // };
 
     let atl_store = Arc::new(alt_store::ALTStore::new(rpc_client));
-    atl_store.load_alts_list(&alts_list).await;
+    atl_store.load_alts_list(alts_list).await;
 
     // let data = atl_store.serialize();
     // let mut alts_file = tokio::fs::File::create("alt_binary.bin").await.unwrap();
@@ -331,7 +333,7 @@ async fn start_tracking_blocks(
                     if let Some(account) = account_update.account {
                         let bytes: [u8; 32] = account.pubkey.try_into().unwrap_or(Pubkey::default().to_bytes());
                         let pubkey = Pubkey::new_from_array(bytes);
-                        atl_store.save_account(&pubkey, &account.data);
+                        atl_store.save_account(pubkey, &account.data);
                     }
                 },
                 _ => {}
@@ -345,7 +347,12 @@ async fn start_tracking_blocks(
 
 #[tokio::main()]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        // not sure if "CLOSE" is exactly what we want
+        // ex. "close time.busy=14.7ms time.idle=14.0µs"
+        .with_span_events(FmtSpan::CLOSE)
+        .init();
 
     let args = Args::parse();
     let rpc_client = Arc::new(rpc_client::RpcClient::new(args.rpc_url));
@@ -370,7 +377,7 @@ async fn main() -> anyhow::Result<()> {
         .split("\r\n")
         .map(|x| x.trim().to_string())
         .filter(|x| x.len() > 0)
-        .map(|x| Pubkey::from_str(&x).unwrap())
+        .map(|x| Pubkey::new_from_array(fd_bs58::decode_32(x).unwrap()))
         .collect_vec();
 
     let mut block_senders = vec![];
@@ -410,7 +417,7 @@ async fn main() -> anyhow::Result<()> {
             args.grpc_x_token,
             block_senders,
             slot,
-            alts_list,
+            alts_list.iter().map(|x| x).collect_vec(),
         )
         .await;
     }

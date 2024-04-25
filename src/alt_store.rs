@@ -26,14 +26,14 @@ pub struct ALTStore {
 impl ALTStore {
     pub fn new(rpc_client: Arc<RpcClient>) -> Self {
         let (sx, rx) = async_channel::unbounded();
-        let instant = Self {
+        let alt_store = Self {
             rpc_client,
             map: Arc::new(DashMap::new()),
             loading_queue: Arc::new(sx),
         };
 
         {
-            let instant = instant.clone();
+            let instant = alt_store.clone();
             tokio::task::spawn(async move {
                 loop {
                     if let Ok(pk) = rx.recv().await {
@@ -51,15 +51,15 @@ impl ALTStore {
             });
         }
 
-        instant
+        alt_store
     }
 
-    pub async fn load_alts_list(&self, alts_list: &Vec<Pubkey>) {
+    pub async fn load_alts_list(&self, alts_list: Vec<&Pubkey>) {
         log::info!("Preloading {} ALTs", alts_list.len());
 
-        for batches in alts_list.chunks(1000).map(|x| x.to_vec()) {
+        for batches in alts_list.chunks(1000) {
             let tasks = batches.chunks(100).map(|batch| {
-                let batch = batch.to_vec();
+                let batch: Vec<Pubkey> = batch.into_iter().map(|pk| (*pk).clone()).collect_vec();
                 let rpc_client = self.rpc_client.clone();
                 let this = self.clone();
                 tokio::spawn(async move {
@@ -74,7 +74,7 @@ impl ALTStore {
                     {
                         for (index, acc) in multiple_accounts.value.iter().enumerate() {
                             if let Some(acc) = acc {
-                                this.save_account(&batch[index], &acc.data);
+                                this.save_account(batch[index], &acc.data);
                             }
                         }
                     }
@@ -94,26 +94,25 @@ impl ALTStore {
         let alts_list = alts_list
             .iter()
             .filter(|x| !self.map.contains_key(x))
-            .cloned()
             .collect_vec();
         if alts_list.is_empty() {
             return;
         }
-        self.load_alts_list(&alts_list).await;
+        self.load_alts_list(alts_list).await;
     }
 
-    pub async fn start_loading_missing_alts(&self, alts_list: &Vec<Pubkey>) {
+    pub async fn start_loading_missing_alts(&self, alts_list: &Vec<&Pubkey>) {
         for key in alts_list.iter().filter(|x| !self.map.contains_key(x)) {
             ALTS_IN_LOADING_QUEUE.inc();
-            let _ = self.loading_queue.send(*key).await;
+            let _ = self.loading_queue.send(*key.clone()).await;
         }
     }
 
-    pub fn save_account(&self, address: &Pubkey, data: &[u8]) {
+    pub fn save_account(&self, address: Pubkey, data: &[u8]) {
         let lookup_table = AddressLookupTable::deserialize(&data).unwrap();
         if self
             .map
-            .insert(address.clone(), lookup_table.addresses.to_vec())
+            .insert(address, lookup_table.addresses.to_vec())
             .is_none()
         {
             ALTS_IN_STORE.inc();
@@ -121,7 +120,7 @@ impl ALTStore {
         drop(lookup_table);
     }
 
-    async fn load_accounts(
+    async fn load_accounts<'a>(
         &self,
         alt: &Pubkey,
         write_accounts: &Vec<u8>,
@@ -188,13 +187,13 @@ impl ALTStore {
     }
 
     pub fn serialize(&self) -> Vec<u8> {
-        bincode::serialize::<BinaryALTData>(&BinaryALTData::new(&self.map)).unwrap()
+        bincode::serialize::<BinaryALTData>(&BinaryALTData::new(self.map.clone())).unwrap()
     }
 
     pub fn load_binary(&self, binary_data: Vec<u8>) {
         let binary_alt_data = bincode::deserialize::<BinaryALTData>(&binary_data).unwrap();
-        for (alt, accounts) in binary_alt_data.data.iter() {
-            self.map.insert(alt.clone(), accounts.clone());
+        for (pubkey, accounts) in binary_alt_data.data {
+            self.map.insert(pubkey, accounts);
         }
     }
 }
@@ -205,7 +204,7 @@ pub struct BinaryALTData {
 }
 
 impl BinaryALTData {
-    pub fn new(map: &Arc<DashMap<Pubkey, Vec<Pubkey>>>) -> Self {
+    pub fn new(map: Arc<DashMap<Pubkey, Vec<Pubkey>>>) -> Self {
         let data = map
             .iter()
             .map(|x| (x.key().clone(), x.value().clone()))

@@ -3,6 +3,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
+use std::rc::Rc;
 
 use anyhow::Context;
 use base64::Engine;
@@ -14,6 +15,7 @@ use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
 use prometheus::{opts, register_int_gauge, IntGauge};
 use serde::Serialize;
+use solana_sdk::pubkey::Pubkey;
 use solana_sdk::transaction::TransactionError;
 use tokio::sync::mpsc::error::SendTimeoutError;
 use tokio::sync::mpsc::Sender;
@@ -199,7 +201,7 @@ impl PostgresSession {
         Ok(())
     }
 
-    pub async fn create_transaction_ids(&self, signatures: HashSet<String>) -> anyhow::Result<()> {
+    pub async fn create_transaction_ids(&self, signatures: Vec<String>) -> anyhow::Result<()> {
         // create temp table
         let temp_table = self.get_new_temp_table();
 
@@ -456,9 +458,10 @@ impl PostgresSession {
         );
         pin_mut!(writer);
         for acc_tx in accounts_for_transaction {
-            for acc in &acc_tx.accounts {
+            for acc in acc_tx.accounts {
                 let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(4);
-                args.push(&acc.key);
+                let pubkey_str = &acc.key;
+                args.push(&pubkey_str);
                 args.push(&acc_tx.signature);
                 args.push(&acc.writable);
                 args.push(&acc.is_signer);
@@ -847,9 +850,10 @@ impl PostgresSession {
             return Ok(());
         }
         // create transaction ids
-        let signatures = txs
+        let signatures: Vec<String> = txs
             .iter()
             .map(|transaction| transaction.signature.clone())
+            .unique()
             .collect();
         self.create_transaction_ids(signatures).await?;
         // create account ids
@@ -870,7 +874,7 @@ impl PostgresSession {
                     .account_used
                     .iter()
                     .map(|(key, is_writable)| AccountUsed {
-                        key: key.clone(),
+                        key: fd_bs58::encode_32(key),
                         writable: *is_writable,
                         is_signer: false,
                         is_atl: false,
@@ -899,44 +903,59 @@ impl PostgresSession {
     }
 
     pub async fn save_block(&self, block_info: BlockInfo) -> anyhow::Result<()> {
+        // 750ms
+        let _span = tracing::info_span!("save_block", slot = block_info.slot);
         let instant = Instant::now();
         // create transaction ids
         let int_sig = Instant::now();
-        let signatures = block_info
-            .transactions
-            .iter()
-            .map(|transaction| transaction.signature.clone())
-            .collect();
+        let signatures = {
+            // .3ms
+            let _span = tracing::debug_span!("map_signatures", slot = block_info.slot);
+            block_info
+                .transactions
+                .iter()
+                .map(|transaction| transaction.signature.clone())
+                .collect()
+        };
         self.create_transaction_ids(signatures).await?;
         TIME_TO_SAVE_TRANSACTION.set(int_sig.elapsed().as_millis() as i64);
         // create account ids
         let ins_acc = Instant::now();
-        let accounts = block_info
-            .heavily_locked_accounts
-            .iter()
-            .map(|acc| acc.key.clone())
-            .collect();
+        let accounts = {
+            // .6ms
+            let _span = tracing::debug_span!("map_accounts", slot = block_info.slot);
+            block_info
+                .heavily_locked_accounts
+                .iter()
+                .map(|acc| acc.key.clone())
+                .collect()
+        };
         self.create_accounts_for_transaction(accounts).await?;
         ACCOUNT_SAVE_TIME.set(ins_acc.elapsed().as_millis() as i64);
 
         let instant_acc_tx: Instant = Instant::now();
-        let txs_accounts = block_info
-            .transactions
-            .iter()
-            .map(|tx| AccountsForTransaction {
-                signature: tx.signature.clone(),
-                accounts: tx
-                    .accounts
-                    .iter()
-                    .map(|acc| AccountUsed {
-                        key: acc.key.to_string(),
-                        writable: acc.is_writable,
-                        is_signer: acc.is_signer,
-                        is_atl: acc.is_alt,
-                    })
-                    .collect(),
-            })
-            .collect_vec();
+        let txs_accounts = {
+            // 90ms
+            let _span = tracing::debug_span!("map_txs_accounts", slot = block_info.slot);
+            block_info
+                .transactions
+                .iter()
+                .map(|tx| AccountsForTransaction {
+                    signature: tx.signature.clone(),
+                    accounts: tx
+                        .accounts
+                        .iter()
+                        .map(|acc| AccountUsed {
+                            key: fd_bs58::encode_32(&acc.key),
+                            writable: acc.is_writable,
+                            is_signer: acc.is_signer,
+                            is_atl: acc.is_alt,
+                        })
+                        .collect(),
+                })
+                .collect_vec()
+        };
+
         if let Err(e) = self.insert_accounts_for_transaction(txs_accounts).await {
             error!("Error inserting accounts for transactions : {e:?}");
         }

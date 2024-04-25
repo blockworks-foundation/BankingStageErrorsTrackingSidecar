@@ -1,4 +1,6 @@
 use std::{collections::HashMap, hash::Hash};
+use std::rc::Rc;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use itertools::Itertools;
@@ -103,8 +105,9 @@ impl TransactionInfo {
             .iter()
             .map(|x| (x.account.clone(), x.is_writable))
             .collect_vec();
+
         Self {
-            signature: notification.signature.clone(),
+            signature: notification.signature.clone().into(),
             errors,
             slot: notification.slot,
             utc_timestamp,

@@ -17,6 +17,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
+use std::rc::Rc;
 
 #[derive(Serialize, Debug, Clone)]
 pub struct PrioFeeData {
@@ -121,7 +122,7 @@ pub struct BlockInfo {
 impl BlockInfo {
     pub async fn process_versioned_message(
         atl_store: &Arc<ALTStore>,
-        signature: &String,
+        signature: String,
         slot: Slot,
         message: &VersionedMessage,
         prio_fees_in_block: &mut Vec<(u64, u64)>,
@@ -183,10 +184,10 @@ impl BlockInfo {
         if !is_vote {
             let mut accounts = message
                 .static_account_keys()
-                .iter()
+                .iter().cloned()
                 .enumerate()
-                .map(|(index, account)| TransactionAccount {
-                    key: account.clone(),
+                .map(|(index, account_pk)| TransactionAccount {
+                    key: account_pk,
                     is_writable: message.is_maybe_writable(index),
                     is_signer: message.is_signer(index),
                     is_alt: false,
@@ -209,7 +210,7 @@ impl BlockInfo {
             for writable_account in accounts
                 .iter()
                 .filter(|x| x.is_writable)
-                .map(|x| x.key.clone())
+                .map(|x| x.key)
             {
                 match writelocked_accounts.get_mut(&writable_account) {
                     Some(x) => {
@@ -219,9 +220,9 @@ impl BlockInfo {
                     }
                     None => {
                         writelocked_accounts.insert(
-                            writable_account.clone(),
+                            writable_account,
                             AccountData {
-                                key: writable_account.to_string(),
+                                key: fd_bs58::encode_32(writable_account),
                                 cu_consumed,
                                 cu_requested,
                                 vec_pf: vec![prioritization_fees],
@@ -234,7 +235,7 @@ impl BlockInfo {
             for readable_account in accounts
                 .iter()
                 .filter(|x| !x.is_writable)
-                .map(|x| x.key.clone())
+                .map(|x| x.key)
             {
                 match readlocked_accounts.get_mut(&readable_account) {
                     Some(x) => {
@@ -244,9 +245,9 @@ impl BlockInfo {
                     }
                     None => {
                         readlocked_accounts.insert(
-                            readable_account.clone(),
+                            readable_account,
                             AccountData {
-                                key: readable_account.to_string(),
+                                key: fd_bs58::encode_32(readable_account),
                                 cu_consumed,
                                 cu_requested,
                                 vec_pf: vec![prioritization_fees],
@@ -257,14 +258,14 @@ impl BlockInfo {
             }
 
             Some(BlockTransactionInfo {
-                signature: signature.to_string(),
+                signature,
                 processed_slot: slot as i64,
                 is_successful,
                 cu_requested: cu_requested as i64,
                 cu_consumed: cu_consumed as i64,
                 prioritization_fees: prioritization_fees as i64,
                 supp_infos: String::new(),
-                accounts: accounts,
+                accounts,
             })
         } else {
             None
@@ -348,6 +349,7 @@ impl BlockInfo {
         block: &yellowstone_grpc_proto_original::prelude::SubscribeUpdateBlock,
     ) -> BlockInfo {
         let block_hash = block.blockhash.clone();
+        let _span = tracing::debug_span!("map_block_info", block_hash = block_hash);
         let slot = block.slot;
         let leader_identity = block
             .rewards
@@ -401,9 +403,8 @@ impl BlockInfo {
                 let Some(meta) = &transaction.meta else {
                     return None;
                 };
-                let signature = Signature::try_from(&tx.signatures[0][0..64])
-                    .unwrap()
-                    .to_string();
+
+                let signature = fd_bs58::encode_64(&tx.signatures[0]);
 
                 let message = VersionedMessage::V0(v0::Message {
                     header: MessageHeader {
@@ -442,7 +443,7 @@ impl BlockInfo {
                                 .try_into()
                                 .unwrap_or(Pubkey::default().to_bytes());
                             let account_key = Pubkey::new_from_array(bytes);
-                            lookup_tables.insert(account_key.clone());
+                            lookup_tables.insert(account_key);
                             MessageAddressTableLookup {
                                 account_key,
                                 writable_indexes: table.writable_indexes,
@@ -456,14 +457,14 @@ impl BlockInfo {
             .collect_vec();
 
         atl_store
-            .start_loading_missing_alts(&lookup_tables.iter().cloned().collect_vec())
+            .start_loading_missing_alts(&lookup_tables.iter().collect_vec())
             .await;
 
         let mut block_transactions = vec![];
         for (signature, message, meta, is_vote) in sigs_and_messages {
             let tx = Self::process_versioned_message(
                 &atl_store,
-                &signature,
+                signature,
                 slot,
                 &message,
                 &mut prio_fees_in_block,
