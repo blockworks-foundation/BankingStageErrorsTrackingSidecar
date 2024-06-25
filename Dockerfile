@@ -1,8 +1,8 @@
 # syntax = docker/dockerfile:1.2
-FROM rust:1.76-bookworm as base
+FROM rust:1.76-slim-bookworm as base
 RUN cargo install cargo-chef@0.1.62 --locked
 RUN rustup component add rustfmt
-RUN apt-get update && apt-get install -y clang cmake ssh
+RUN apt-get update && apt-get install -y clang cmake ssh ca-certificates libc6 libssl3 libssl-dev openssl
 WORKDIR /app
 
 FROM base AS plan
