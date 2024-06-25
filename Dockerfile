@@ -1,5 +1,7 @@
 # syntax = docker/dockerfile:1.2
-FROM lukemathwalker/cargo-chef:0.1.67-rust-slim-bookworm as base
+FROM rust:1.76-slim-bookworm as base
+RUN cargo install cargo-chef@0.1.67 --locked
+RUN rustup component add rustfmt
 RUN apt-get update && apt-get install -y clang cmake ssh
 WORKDIR /app
 
