@@ -383,7 +383,7 @@ async fn main() -> anyhow::Result<()> {
         .collect_vec();
 
     let mut block_senders = vec![];
-    info!("Starting {} block senders");
+    info!("Starting {} block senders", NUM_BLOCK_SENDERS);
     for i in 1..=NUM_BLOCK_SENDERS {
         let s = postgres::Postgres::new_with_workmem(i)
             .await

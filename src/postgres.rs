@@ -194,6 +194,18 @@ impl PostgresSession {
         info!("Disable parallel postgres workers");
     }
 
+    pub async fn relax_commit_settings(&self) {
+        self.client
+            .execute("SET synchronous_commit TO 'off'", &[])
+            .await
+            .unwrap();
+        self.client
+            .execute("SET commit_delay TO 1000", &[])
+            .await
+            .unwrap();
+        info!("Configured synchronous_commit and commit_delay");
+    }
+
     pub async fn drop_temp_table(&self, table: String) -> anyhow::Result<()> {
         self.client
             .execute(format!("drop table if exists {};", table).as_str(), &[])
@@ -1307,6 +1319,7 @@ impl Postgres {
         let session = PostgresSession::new(nb).await.unwrap();
         let session = Arc::new(session);
         session.configure_work_mem().await;
+        session.disable_postgres_workers().await;
         Self { session }
     }
 
