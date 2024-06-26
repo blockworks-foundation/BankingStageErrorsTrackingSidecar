@@ -8,7 +8,7 @@ use std::rc::Rc;
 use anyhow::Context;
 use base64::Engine;
 use dashmap::DashMap;
-use futures::pin_mut;
+use futures::{join, pin_mut, try_join};
 use itertools::Itertools;
 use log::{debug, error, info, log, warn, Level};
 use native_tls::{Certificate, Identity, TlsConnector};
@@ -936,8 +936,6 @@ impl PostgresSession {
         // 750ms
         let _span = tracing::info_span!("save_block", slot = block_info.slot);
         let instant = Instant::now();
-        // create transaction ids
-        let int_sig = Instant::now();
         let signatures = {
             // .3ms
             let _span = tracing::debug_span!("map_signatures", slot = block_info.slot);
@@ -947,11 +945,6 @@ impl PostgresSession {
                 .map(|transaction| transaction.signature.clone())
                 .collect()
         };
-        debug!("Creating transaction ids for block {}", slot);
-        self.create_transaction_ids(signatures, slot).await?;
-        TIME_TO_SAVE_TRANSACTION.set(int_sig.elapsed().as_millis() as i64);
-        // create account ids
-        let ins_acc = Instant::now();
         let accounts = {
             // .6ms
             let _span = tracing::debug_span!("map_accounts", slot = block_info.slot);
@@ -961,8 +954,13 @@ impl PostgresSession {
                 .map(|acc| acc.key.clone())
                 .collect()
         };
-        self.create_accounts_for_transaction(accounts, slot).await?;
-        ACCOUNT_SAVE_TIME.set(ins_acc.elapsed().as_millis() as i64);
+
+        let both_started_at = Instant::now();
+        let create_tx_ids = self.create_transaction_ids(signatures, slot);
+        let create_accs = self.create_accounts_for_transaction(accounts, slot);
+        try_join!(create_tx_ids, create_accs)?;
+        TIME_TO_SAVE_TRANSACTION.set(both_started_at.elapsed().as_millis() as i64);
+        ACCOUNT_SAVE_TIME.set(both_started_at.elapsed().as_millis() as i64);
 
         let instant_acc_tx: Instant = Instant::now();
         let txs_accounts = {
