@@ -936,7 +936,7 @@ impl PostgresSession {
         debug!("Saving block {} ...", slot);
         // 750ms
         let _span = tracing::info_span!("save_block", slot = block_info.slot);
-        let instant = Instant::now();
+        let save_block_started_at = Instant::now();
         let fut_signatures = async {
             // .3ms
             let _span = tracing::debug_span!("map_signatures", slot = block_info.slot);
@@ -992,22 +992,21 @@ impl PostgresSession {
         let fut_insert_accounts_for_transaction = self.insert_accounts_for_transaction(txs_accounts, slot);
         // depends on transactions mapping table
         let fut_insert_transactions_for_block = self.insert_transactions_for_block(&block_info.transactions, slot);
-        let ((), ()) = try_join!(fut_insert_accounts_for_transaction, fut_insert_transactions_for_block)?;
+        // depends on accounts mapping table
+        let fut_save_account_usage_in_block = self.save_account_usage_in_block(&block_info);
+        // no dependencies
+        let fut_save_block_info = self.save_block_info(&block_info);
+        let ((), (), (), ()) = try_join!(
+            fut_insert_accounts_for_transaction,
+            fut_insert_transactions_for_block,
+            fut_save_account_usage_in_block,
+            fut_save_block_info)?;
         TIME_TO_STORE_TX_ACCOUNT.set(both_started_at.elapsed().as_millis() as i64);
         TIME_TO_SAVE_TRANSACTION_DATA.set(both_started_at.elapsed().as_millis() as i64);
+        TIME_TO_SAVE_BLOCK_ACCOUNTS.set(both_started_at.elapsed().as_millis() as i64);
+        BLOCK_INFO_SAVE_TIME.set(both_started_at.elapsed().as_millis() as i64);
 
-        // save account usage in blocks
-        let ins = Instant::now();
-        // depends on accounts mapping table
-        self.save_account_usage_in_block(&block_info).await?;
-        TIME_TO_SAVE_BLOCK_ACCOUNTS.set(ins.elapsed().as_millis() as i64);
-
-        let inst_block_info = Instant::now();
-        // no dependencies
-        self.save_block_info(&block_info).await?;
-        BLOCK_INFO_SAVE_TIME.set(inst_block_info.elapsed().as_millis() as i64);
-
-        TIME_TO_SAVE_BLOCK.set(instant.elapsed().as_millis() as i64);
+        TIME_TO_SAVE_BLOCK.set(save_block_started_at.elapsed().as_millis() as i64);
         Ok(())
     }
 }
