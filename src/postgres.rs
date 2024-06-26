@@ -108,6 +108,8 @@ impl PostgresSession {
     pub async fn new(nb: usize) -> anyhow::Result<Self> {
         let pg_config = std::env::var("PG_CONFIG").context("env PG_CONFIG not found")?;
         let pg_config = pg_config.parse::<tokio_postgres::Config>()?;
+        info!("Using Postgres config to database {} with ssl_disabled={}",
+            pg_config.get_dbname().unwrap_or("n/a"), matches!(pg_config.get_ssl_mode(), SslMode::Disable));
 
         let client = if let SslMode::Disable = pg_config.get_ssl_mode() {
             Self::spawn_connection(pg_config, NoTls).await?
