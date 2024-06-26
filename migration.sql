@@ -6,13 +6,11 @@
 CREATE SCHEMA banking_stage_results_2;
 
 CREATE TABLE banking_stage_results_2.transactions(
-                                                     transaction_id bigserial PRIMARY KEY,
-                                                     signature varchar(88) NOT NULL,
-                                                     UNIQUE(signature)
+	transaction_id bigserial,
+	signature varchar(88) NOT NULL,
+	PRIMARY KEY (transaction_id) INCLUDE(signature),
+	UNIQUE(signature) INCLUDE (transaction_id)
 );
-ALTER TABLE banking_stage_results_2.transactions ALTER COLUMN signature SET STORAGE MAIN;
--- page layout: rows are small and must store in main; compression is okey
--- ALTER TABLE banking_stage_results_2.transactions SET (toast_tuple_target=4080);
 
 
 CREATE TABLE banking_stage_results_2.transaction_infos (
