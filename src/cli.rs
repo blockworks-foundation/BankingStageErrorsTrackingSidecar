@@ -9,6 +9,7 @@ pub struct Args {
     #[arg(short, long)]
     pub grpc_address_to_fetch_blocks: Option<String>,
 
+    // note: this only applies to grpc_address_to_fetch_blocks
     #[arg(short = 'x', long)]
     pub grpc_x_token: Option<String>,
 

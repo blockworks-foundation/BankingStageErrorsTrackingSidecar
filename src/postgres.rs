@@ -15,6 +15,7 @@ use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
 use prometheus::{opts, register_int_gauge, IntGauge};
 use serde::Serialize;
+use solana_sdk::clock::Slot;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::transaction::TransactionError;
 use tokio::sync::mpsc::error::SendTimeoutError;
@@ -210,7 +211,7 @@ impl PostgresSession {
         Ok(())
     }
 
-    pub async fn create_transaction_ids(&self, signatures: Vec<String>) -> anyhow::Result<()> {
+    pub async fn create_transaction_ids(&self, signatures: Vec<String>, slot: Slot) -> anyhow::Result<()> {
         // create temp table
         let temp_table = self.get_new_temp_table();
 
@@ -246,9 +247,10 @@ impl PostgresSession {
         }
         let num_rows = writer.finish().await?;
         debug!(
-            "inserted {} signatures into temp table in {}ms",
+            "inserted {} signatures into temp table in {}ms (block {})",
             num_rows,
-            started_at.elapsed().as_millis()
+            started_at.elapsed().as_millis(),
+            slot
         );
 
         let statement = format!(
@@ -262,19 +264,22 @@ impl PostgresSession {
         );
         let started_at = Instant::now();
         let num_rows = self.client.execute(statement.as_str(), &[]).await?;
+        self.drop_temp_table(temp_table).await?;
+
         debug!(
-            "inserted {} signatures in transactions table in {}ms",
+            "inserted {} signatures in transactions table in {}ms (block {})",
             num_rows,
-            started_at.elapsed().as_millis()
+            started_at.elapsed().as_millis(),
+            slot
         );
 
-        self.drop_temp_table(temp_table).await?;
         Ok(())
     }
 
     pub async fn create_accounts_for_transaction(
         &self,
         accounts: HashSet<String>,
+        slot: Slot,
     ) -> anyhow::Result<()> {
         // create temp table
         let temp_table = self.get_new_temp_table();
@@ -325,13 +330,15 @@ impl PostgresSession {
         );
         let started_at = Instant::now();
         self.client.execute(statement.as_str(), &[]).await?;
+        self.drop_temp_table(temp_table).await?;
+
         debug!(
-            "inserted {} account keys into accounts table in {}ms",
+            "inserted {} account keys into accounts table in {}ms (block {})",
             num_rows,
-            started_at.elapsed().as_millis()
+            started_at.elapsed().as_millis(),
+            slot
         );
 
-        self.drop_temp_table(temp_table).await?;
         Ok(())
     }
 
@@ -431,6 +438,7 @@ impl PostgresSession {
     pub async fn insert_accounts_for_transaction(
         &self,
         accounts_for_transaction: Vec<AccountsForTransaction>,
+        slot: Slot,
     ) -> anyhow::Result<()> {
         let instant = Instant::now();
         let temp_table = self.get_new_temp_table();
@@ -480,9 +488,10 @@ impl PostgresSession {
         }
         let num_rows = writer.finish().await?;
         debug!(
-            "inserted {} accounts for transaction into temp table in {}ms",
+            "inserted {} accounts for transaction into temp table in {}ms (block {})",
             num_rows,
-            started_at.elapsed().as_millis()
+            started_at.elapsed().as_millis(),
+            slot
         );
 
         // note: no lock ordering here, as the accounts_map_transaction does not seem to cause deadlocks (issue 58)
@@ -504,9 +513,10 @@ impl PostgresSession {
         let started_at = Instant::now();
         let rows = self.client.execute(statement.as_str(), &[]).await?;
         debug!(
-            "inserted {} accounts into accounts_map_transaction in {}ms",
+            "inserted {} accounts into accounts_map_transaction in {}ms (block {})",
             rows,
-            started_at.elapsed().as_millis()
+            started_at.elapsed().as_millis(),
+            slot
         );
         TIME_TO_STORE_TX_ACCOUNT_OLD.set(instant.elapsed().as_millis() as i64);
 
@@ -576,7 +586,7 @@ impl PostgresSession {
     pub async fn insert_transactions_for_block(
         &self,
         transactions: &Vec<BlockTransactionInfo>,
-        slot: i64,
+        slot: Slot,
     ) -> anyhow::Result<()> {
         let temp_table = self.get_new_temp_table();
         self.client
@@ -627,10 +637,11 @@ impl PostgresSession {
             ],
         );
         pin_mut!(writer);
+        let slot_db = slot as i64;
         for transaction in transactions {
             let mut args: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(7);
             args.push(&transaction.signature);
-            args.push(&slot);
+            args.push(&slot_db);
             args.push(&transaction.is_successful);
             args.push(&transaction.cu_requested);
             args.push(&transaction.cu_consumed);
@@ -640,9 +651,10 @@ impl PostgresSession {
         }
         let num_rows = writer.finish().await?;
         debug!(
-            "inserted {} transactions for block into temp table in {}ms",
+            "inserted {} transactions for block into temp table in {}ms (block {})",
             num_rows,
-            started_at.elapsed().as_millis()
+            started_at.elapsed().as_millis(),
+            slot
         );
 
         let statement = format!(
@@ -666,9 +678,10 @@ impl PostgresSession {
         let started_at = Instant::now();
         let num_rows = self.client.execute(statement.as_str(), &[]).await?;
         debug!(
-            "inserted {} transactions for block into transaction_infos table in {}ms",
+            "inserted {} transactions for block into transaction_infos table in {}ms (block {})",
             num_rows,
-            started_at.elapsed().as_millis()
+            started_at.elapsed().as_millis(),
+            slot
         );
 
         self.drop_temp_table(temp_table).await?;
@@ -676,6 +689,7 @@ impl PostgresSession {
     }
 
     pub async fn save_account_usage_in_block(&self, block_info: &BlockInfo) -> anyhow::Result<()> {
+        let slot = block_info.slot;
         let temp_table = self.get_new_temp_table();
         self.client
             .execute(
@@ -753,9 +767,10 @@ impl PostgresSession {
         }
         let num_rows = writer.finish().await?;
         debug!(
-            "inserted {} heavily_locked_accounts into temp table in {}ms",
+            "inserted {} heavily_locked_accounts into temp table in {}ms (block {})",
             num_rows,
-            started_at.elapsed().as_millis()
+            started_at.elapsed().as_millis(),
+            slot
         );
 
         let statement = format!(
@@ -797,13 +812,15 @@ impl PostgresSession {
         );
         let started_at = Instant::now();
         let num_rows = self.client.execute(statement.as_str(), &[]).await?;
+        self.drop_temp_table(temp_table).await?;
+
         debug!(
-            "inserted {} heavily_locked_accounts into accounts_map_blocks table in {}ms",
+            "inserted {} heavily_locked_accounts into accounts_map_blocks table in {}ms (block {})",
             num_rows,
-            started_at.elapsed().as_millis()
+            started_at.elapsed().as_millis(),
+            slot
         );
 
-        self.drop_temp_table(temp_table).await?;
         Ok(())
     }
 
@@ -839,9 +856,10 @@ impl PostgresSession {
             )
             .await?;
         debug!(
-            "inserted {} block info into blocks table in {}ms",
+            "inserted {} block info into blocks table in {}ms (block {})",
             num_rows,
-            started_at.elapsed().as_millis()
+            started_at.elapsed().as_millis(),
+            block_info.slot,
         );
 
         if num_rows == 0 {
@@ -854,6 +872,7 @@ impl PostgresSession {
     pub async fn save_banking_transaction_results(
         &self,
         txs: Vec<TransactionInfo>,
+        slot: Slot,
     ) -> anyhow::Result<()> {
         if txs.is_empty() {
             return Ok(());
@@ -864,14 +883,14 @@ impl PostgresSession {
             .map(|transaction| transaction.signature.clone())
             .unique()
             .collect();
-        self.create_transaction_ids(signatures).await?;
+        self.create_transaction_ids(signatures, slot).await?;
         // create account ids
         let accounts = txs
             .iter()
             .flat_map(|transaction| transaction.account_used.clone())
             .map(|(acc, _)| acc)
             .collect();
-        self.create_accounts_for_transaction(accounts).await?;
+        self.create_accounts_for_transaction(accounts, slot).await?;
         // add transaction in tx slot table
         self.insert_transaction_in_txslot_table(txs.as_slice())
             .await?;
@@ -895,7 +914,7 @@ impl PostgresSession {
         ACCOUNTS_SAVING_QUEUE.inc();
         let instant: Instant = Instant::now();
         ACCOUNTS_SAVING_QUEUE.dec();
-        if let Err(e) = self.insert_accounts_for_transaction(txs_accounts).await {
+        if let Err(e) = self.insert_accounts_for_transaction(txs_accounts, slot).await {
             error!("Error inserting accounts for transactions : {e:?}");
         }
         TIME_TO_STORE_TX_ACCOUNT.set(instant.elapsed().as_millis() as i64);
@@ -912,6 +931,7 @@ impl PostgresSession {
     }
 
     pub async fn save_block(&self, block_info: BlockInfo) -> anyhow::Result<()> {
+        let slot = block_info.slot as Slot;
         // 750ms
         let _span = tracing::info_span!("save_block", slot = block_info.slot);
         let instant = Instant::now();
@@ -926,7 +946,7 @@ impl PostgresSession {
                 .map(|transaction| transaction.signature.clone())
                 .collect()
         };
-        self.create_transaction_ids(signatures).await?;
+        self.create_transaction_ids(signatures, slot).await?;
         TIME_TO_SAVE_TRANSACTION.set(int_sig.elapsed().as_millis() as i64);
         // create account ids
         let ins_acc = Instant::now();
@@ -939,7 +959,7 @@ impl PostgresSession {
                 .map(|acc| acc.key.clone())
                 .collect()
         };
-        self.create_accounts_for_transaction(accounts).await?;
+        self.create_accounts_for_transaction(accounts, slot).await?;
         ACCOUNT_SAVE_TIME.set(ins_acc.elapsed().as_millis() as i64);
 
         let instant_acc_tx: Instant = Instant::now();
@@ -965,14 +985,14 @@ impl PostgresSession {
                 .collect_vec()
         };
 
-        if let Err(e) = self.insert_accounts_for_transaction(txs_accounts).await {
+        if let Err(e) = self.insert_accounts_for_transaction(txs_accounts, slot).await {
             error!("Error inserting accounts for transactions : {e:?}");
         }
         TIME_TO_STORE_TX_ACCOUNT.set(instant_acc_tx.elapsed().as_millis() as i64);
 
         // insert transactions
         let instant_save_tx = Instant::now();
-        self.insert_transactions_for_block(&block_info.transactions, block_info.slot)
+        self.insert_transactions_for_block(&block_info.transactions, slot)
             .await?;
         TIME_TO_SAVE_TRANSACTION_DATA.set(instant_save_tx.elapsed().as_millis() as i64);
 
@@ -1382,7 +1402,7 @@ impl Postgres {
                         .filter_map(|key| map_of_transaction.remove(key))
                         .map(|(_, trans)| trans)
                         .collect_vec();
-                    if let Err(err) = session.save_banking_transaction_results(batches).await {
+                    if let Err(err) = session.save_banking_transaction_results(batches, slot).await {
                         panic!("saving transaction infos failed {}", err);
                     }
                 }
