@@ -1414,8 +1414,8 @@ pub async fn send_block_info_to_buffer(
     block_info: BlockInfo,
 ) -> anyhow::Result<()> {
     debug!(
-        "block buffer capacity: {}",
-        block_sender_postgres.capacity()
+        "block buffer remaining capacity: {}",
+        block_sender_postgres.max_capacity() - block_sender_postgres.capacity()
     );
 
     const WARNING_THRESHOLD: Duration = Duration::from_millis(3000);
