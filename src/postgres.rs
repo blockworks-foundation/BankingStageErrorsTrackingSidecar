@@ -199,11 +199,8 @@ impl PostgresSession {
             .execute("SET synchronous_commit TO 'off'", &[])
             .await
             .unwrap();
-        self.client
-            .execute("SET commit_delay TO 1000", &[])
-            .await
-            .unwrap();
-        info!("Configured synchronous_commit and commit_delay");
+        // note: commit_delay can be changed but requires superuser
+        info!("Configured synchronous_commit");
     }
 
     pub async fn drop_temp_table(&self, table: String) -> anyhow::Result<()> {
