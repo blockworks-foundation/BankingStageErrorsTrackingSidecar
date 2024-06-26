@@ -932,6 +932,7 @@ impl PostgresSession {
 
     pub async fn save_block(&self, block_info: BlockInfo) -> anyhow::Result<()> {
         let slot = block_info.slot as Slot;
+        debug!("Saving block {} ...", slot);
         // 750ms
         let _span = tracing::info_span!("save_block", slot = block_info.slot);
         let instant = Instant::now();
@@ -946,6 +947,7 @@ impl PostgresSession {
                 .map(|transaction| transaction.signature.clone())
                 .collect()
         };
+        debug!("Creating transaction ids for block {}", slot);
         self.create_transaction_ids(signatures, slot).await?;
         TIME_TO_SAVE_TRANSACTION.set(int_sig.elapsed().as_millis() as i64);
         // create account ids
