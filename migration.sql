@@ -13,7 +13,7 @@ CREATE TABLE banking_stage_results_2.transactions(
 );
 ALTER INDEX banking_stage_results_2.transaction_pkey SET (FILLFACTOR=80);
 ALTER INDEX banking_stage_results_2.transaction_signature_transaction_id_key SET (FILLFACTOR=80);
-
+ALTER TABLE banking_stage_results_2.transactions SET (toast_tuple_target=128);
 
 CREATE TABLE banking_stage_results_2.transaction_infos (
                                                            transaction_id BIGINT PRIMARY KEY,
@@ -72,11 +72,10 @@ CREATE TABLE banking_stage_results_2.accounts(
                                                  PRIMARY KEY (acc_id) INCLUDE(account_key),
                                                  UNIQUE(account_key) INCLUDE (acc_id)
 );
--- page layout: rows are small and must store in main; compression is okey
-ALTER TABLE banking_stage_results_2.accounts ALTER COLUMN account_key SET STORAGE main;
--- ALTER TABLE banking_stage_results_2.transactions SET (toast_tuple_target=4080);
+ALTER TABLE banking_stage_results_2.accounts SET (toast_tuple_target=128);
 ALTER INDEX banking_stage_results_2.accounts_pkey SET (FILLFACTOR=80);
 ALTER INDEX banking_stage_results_2.accounts_account_key_acc_id_key SET (FILLFACTOR=80);
+-- table+index size (605mn rows): 146GB total = 48GB main table + 49 GB index by acc_id + 49 GB index by account_key
 
 
 CREATE TABLE banking_stage_results_2.accounts_map_transaction(
