@@ -443,6 +443,11 @@ impl PostgresSession {
         accounts_for_transaction: Vec<AccountsForTransaction>,
         slot: Slot,
     ) -> anyhow::Result<()> {
+        if true {
+            info!("DISABLED insert_accounts_for_transaction");
+            return Ok(());
+        }
+
         let instant = Instant::now();
         let temp_table = self.get_new_temp_table();
         self.client
