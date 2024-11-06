@@ -67,7 +67,7 @@ ALTER TABLE banking_stage_results_2.blocks ALTER COLUMN block_hash SET STORAGE m
 CREATE INDEX idx_blocks_block_hash ON banking_stage_results_2.blocks(block_hash);
 
 CREATE TABLE banking_stage_results_2.accounts(
-                                                 acc_id bigserial PRIMARY KEY,
+                                                 acc_id bigserial,
                                                  account_key varchar(44) NOT NULL,
                                                  PRIMARY KEY (acc_id) INCLUDE(account_key),
                                                  UNIQUE(account_key) INCLUDE (acc_id)
