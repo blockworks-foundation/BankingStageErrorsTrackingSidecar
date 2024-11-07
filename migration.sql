@@ -11,8 +11,8 @@ CREATE TABLE banking_stage_results_2.transactions(
 	PRIMARY KEY (transaction_id) INCLUDE(signature),
 	UNIQUE(signature) INCLUDE (transaction_id)
 );
-ALTER INDEX banking_stage_results_2.transaction_pkey SET (FILLFACTOR=80);
-ALTER INDEX banking_stage_results_2.transaction_signature_transaction_id_key SET (FILLFACTOR=80);
+ALTER INDEX banking_stage_results_2.transactions_pkey SET (FILLFACTOR=80);
+ALTER INDEX banking_stage_results_2.transactions_signature_transaction_id_key SET (FILLFACTOR=80);
 ALTER TABLE banking_stage_results_2.transactions SET (toast_tuple_target=128);
 
 CREATE TABLE banking_stage_results_2.transaction_infos (
